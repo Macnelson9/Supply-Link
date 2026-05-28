@@ -10,7 +10,8 @@ use soroban_sdk::{contract, contractimpl, contracttype, contracterror, Address, 
 /// | Version | Changes |
 /// |---------|---------|
 /// | 1       | Initial versioned schema. Adds `schema_version` field. |
-pub const EVENT_SCHEMA_VERSION: u32 = 1;
+/// | 2       | Adds `metadata_commitment` and `private_metadata` fields for privacy-preserving (off-chain encrypted) metadata. |
+pub const EVENT_SCHEMA_VERSION: u32 = 2;
 
 mod tests;
 mod resilience_tests;
@@ -29,6 +30,9 @@ const MAX_NAME_LEN:     u32 = 256;
 const MAX_ORIGIN_LEN:   u32 = 256;
 const MAX_LOCATION_LEN: u32 = 256;
 const MAX_METADATA_LEN: u32 = 4096;
+// Privacy commitment (issue #409): a hex-encoded hash of the off-chain encrypted
+// payload. A SHA-256 hex digest is 64 chars; allow headroom for other digests.
+const MAX_COMMITMENT_LEN: u32 = 128;
 
 // ── Event expiration policy (issue #314) ──────────────────────────────────────
 /// Pending events expire after this many seconds (7 days).
@@ -143,7 +147,22 @@ pub struct TrackingEvent {
     /// Arbitrary JSON string carrying stage-specific metadata
     /// (e.g. `{"temperature":"4°C","humidity":"60%"}`). The contract stores
     /// this opaquely; consumers are responsible for parsing it.
+    ///
+    /// For privacy-preserving events (see `private_metadata`) this field is an
+    /// **empty string**: the plaintext is never written on-chain. The encrypted
+    /// payload lives off-chain and only its hash is recorded in
+    /// `metadata_commitment`.
     pub metadata: String,
+    /// Hex-encoded hash commitment of the off-chain encrypted metadata payload
+    /// (issue #409). Empty for public events. When set, it lets anyone verify
+    /// that an off-chain payload matches what was recorded on-chain, without
+    /// revealing the payload itself. The commitment is a one-way hash, so the
+    /// plaintext cannot be recovered from it.
+    pub metadata_commitment: String,
+    /// `true` when this event's metadata is private (encrypted off-chain, only
+    /// the `metadata_commitment` is on-chain). `false` for ordinary public
+    /// events whose plaintext metadata is stored in `metadata`.
+    pub private_metadata: bool,
 }
 
 /// A pending event awaiting multi-signature approval.
@@ -420,26 +439,110 @@ impl SupplyLinkContract {
             timestamp: env.ledger().timestamp(),
             event_type: event_type.clone(),
             metadata,
+            metadata_commitment: String::from_str(&env, ""),
+            private_metadata: false,
         };
 
-        // Check if multi-signature is required
+        Self::record_event(&env, &product, event.clone());
+
+        Ok(event)
+    }
+
+    /// Add a tracking event whose metadata is private (issue #409).
+    ///
+    /// Identical to [`Self::add_tracking_event`] except the plaintext metadata is
+    /// **never** written on-chain. The caller encrypts the sensitive metadata
+    /// off-chain, stores the ciphertext off-chain, and submits only a
+    /// `metadata_commitment` — a hex-encoded hash of that ciphertext. The stored
+    /// event has `private_metadata = true` and an empty `metadata` field.
+    ///
+    /// This preserves provable provenance (anyone can hash the off-chain payload
+    /// and compare it against the on-chain commitment) while keeping the contents
+    /// confidential: the commitment is a one-way hash, so the plaintext cannot be
+    /// recovered from on-chain data alone.
+    ///
+    /// # Parameters
+    /// - `metadata_commitment` — Hex-encoded hash of the off-chain encrypted
+    ///   payload. Must be non-empty and at most `MAX_COMMITMENT_LEN` bytes.
+    ///
+    /// # Authorization
+    /// Identical to [`Self::add_tracking_event`].
+    ///
+    /// # Panics
+    /// - `"commitment required for private metadata"` — if `metadata_commitment` is empty.
+    /// - `"metadata_commitment exceeds max length"` — if the commitment is too long.
+    ///
+    /// # Errors
+    /// - [`Error::ProductNotFound`] — if `product_id` is not registered.
+    /// - [`Error::NotAuthorized`] — if `caller` is neither owner nor authorized actor.
+    pub fn add_private_tracking_event(
+        env: Env,
+        product_id: String,
+        caller: Address,
+        location: String,
+        event_type: String,
+        metadata_commitment: String,
+    ) -> Result<TrackingEvent, Error> {
+        let product: Product = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Product(product_id.clone()))
+            .ok_or(Error::ProductNotFound)?;
+
+        let is_owner = product.owner == caller;
+        let is_actor = product.authorized_actors.contains(&caller);
+        if !is_owner && !is_actor {
+            return Err(Error::NotAuthorized);
+        }
+        caller.require_auth();
+
+        assert_len(&location, MAX_LOCATION_LEN, "location");
+        if metadata_commitment.len() == 0 {
+            panic!("commitment required for private metadata");
+        }
+        assert_len(&metadata_commitment, MAX_COMMITMENT_LEN, "metadata_commitment");
+
+        let event = TrackingEvent {
+            schema_version: EVENT_SCHEMA_VERSION,
+            product_id: product_id.clone(),
+            location,
+            actor: caller.clone(),
+            timestamp: env.ledger().timestamp(),
+            event_type,
+            // Plaintext is NEVER stored on-chain for private events.
+            metadata: String::from_str(&env, ""),
+            metadata_commitment,
+            private_metadata: true,
+        };
+
+        Self::record_event(&env, &product, event.clone());
+
+        Ok(event)
+    }
+
+    /// Append a finalized event, or stage it for multi-signature approval, then
+    /// emit the matching event. Shared by [`Self::add_tracking_event`] and
+    /// [`Self::add_private_tracking_event`].
+    fn record_event(env: &Env, product: &Product, event: TrackingEvent) {
+        let product_id = event.product_id.clone();
+        let event_type = event.event_type.clone();
+
         if product.required_signatures > 1 {
             // Stage event as pending with a stable ID
             let mut pending: Vec<PendingEvent> = env
                 .storage()
                 .persistent()
                 .get(&DataKey::PendingEvents(product_id.clone()))
-                .unwrap_or_else(|| Vec::new(&env));
+                .unwrap_or_else(|| Vec::new(env));
 
-            // Generate next stable pending event ID
             let next_id: u64 = env
                 .storage()
                 .persistent()
                 .get(&DataKey::NextPendingId(product_id.clone()))
                 .unwrap_or(0u64);
 
-            let mut approvals = Vec::new(&env);
-            approvals.push_back(caller);
+            let mut approvals = Vec::new(env);
+            approvals.push_back(event.actor.clone());
 
             let pending_event = PendingEvent {
                 pending_event_id: next_id,
@@ -456,37 +559,31 @@ impl SupplyLinkContract {
                 .persistent()
                 .set(&DataKey::PendingEvents(product_id.clone()), &pending);
 
-            // Increment the ID counter for next pending event
             env.storage()
                 .persistent()
                 .set(&DataKey::NextPendingId(product_id.clone()), &(next_id + 1));
 
-            // Emit pending event
             env.events().publish(
-                (Symbol::new(&env, "event_pending"), product_id, event_type, EVENT_SCHEMA_VERSION),
-                event.clone(),
+                (Symbol::new(env, "event_pending"), product_id, event_type, EVENT_SCHEMA_VERSION),
+                event,
             );
         } else {
-            // Immediately finalize event
             let mut events: Vec<TrackingEvent> = env
                 .storage()
                 .persistent()
                 .get(&DataKey::Events(product_id.clone()))
-                .unwrap_or_else(|| Vec::new(&env));
+                .unwrap_or_else(|| Vec::new(env));
 
             events.push_back(event.clone());
             env.storage()
                 .persistent()
                 .set(&DataKey::Events(product_id.clone()), &events);
 
-            // Emit event
             env.events().publish(
-                (Symbol::new(&env, "event_added"), product_id, event_type, EVENT_SCHEMA_VERSION),
-                event.clone(),
+                (Symbol::new(env, "event_added"), product_id, event_type, EVENT_SCHEMA_VERSION),
+                event,
             );
         }
-
-        Ok(event)
     }
 
     /// Retrieve a product by its ID.
@@ -1507,5 +1604,148 @@ mod rejection_reason_tests {
         // Reject with max length reason (should work)
         let result = client.reject_event(&product_id, &0, &owner, &max_reason, &1);
         assert_eq!(result, true);
+    }
+}
+
+#[cfg(test)]
+mod private_metadata_tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Env};
+
+    fn setup(env: &Env) -> (SupplyLinkContractClient<'_>, Address, String) {
+        let contract_id = env.register_contract(None, SupplyLinkContract);
+        let client = SupplyLinkContractClient::new(env, &contract_id);
+        let owner = Address::generate(env);
+        let product_id = String::from_str(env, "priv-product-001");
+        env.mock_all_auths();
+        client.register_product(
+            &product_id,
+            &String::from_str(env, "Confidential Batch"),
+            &String::from_str(env, "Origin"),
+            &owner,
+            &1,
+        );
+        (client, owner, product_id)
+    }
+
+    #[test]
+    fn test_private_event_stores_only_commitment_not_plaintext() {
+        let env = Env::default();
+        let (client, owner, product_id) = setup(&env);
+
+        // A hex commitment standing in for SHA-256(ciphertext). The plaintext
+        // (e.g. {"supplier":"ACME","unit_cost":"4.20"}) is encrypted off-chain
+        // and never passed to the contract.
+        let commitment = String::from_str(
+            &env,
+            "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        );
+
+        client.add_private_tracking_event(
+            &product_id,
+            &owner,
+            &String::from_str(&env, "Cold Store 3"),
+            &String::from_str(&env, "PROCESSING"),
+            &commitment,
+        );
+
+        let events = client.get_tracking_events(&product_id);
+        assert_eq!(events.len(), 1);
+        let ev = events.get(0).unwrap();
+
+        // Privacy invariant: the on-chain record exposes the commitment and the
+        // private flag, but NOT the plaintext metadata.
+        assert!(ev.private_metadata);
+        assert_eq!(ev.metadata, String::from_str(&env, ""));
+        assert_eq!(ev.metadata_commitment, commitment);
+        // schema bumped to v2 for privacy-aware events.
+        assert_eq!(ev.schema_version, 2);
+    }
+
+    #[test]
+    fn test_public_event_has_no_commitment_and_is_not_private() {
+        let env = Env::default();
+        let (client, owner, product_id) = setup(&env);
+
+        client.add_tracking_event(
+            &product_id,
+            &owner,
+            &String::from_str(&env, "Warehouse A"),
+            &String::from_str(&env, "SHIPPING"),
+            &String::from_str(&env, "{\"carrier\":\"DHL\"}"),
+        );
+
+        let ev = client.get_tracking_events(&product_id).get(0).unwrap();
+        assert!(!ev.private_metadata);
+        assert_eq!(ev.metadata_commitment, String::from_str(&env, ""));
+        assert_eq!(ev.metadata, String::from_str(&env, "{\"carrier\":\"DHL\"}"));
+    }
+
+    #[test]
+    #[should_panic(expected = "commitment required for private metadata")]
+    fn test_private_event_rejects_empty_commitment() {
+        let env = Env::default();
+        let (client, owner, product_id) = setup(&env);
+
+        client.add_private_tracking_event(
+            &product_id,
+            &owner,
+            &String::from_str(&env, "Cold Store 3"),
+            &String::from_str(&env, "PROCESSING"),
+            &String::from_str(&env, ""),
+        );
+    }
+
+    #[test]
+    fn test_private_event_unauthorized_caller_rejected() {
+        let env = Env::default();
+        let (client, _owner, product_id) = setup(&env);
+        let stranger = Address::generate(&env);
+
+        let result = client.try_add_private_tracking_event(
+            &product_id,
+            &stranger,
+            &String::from_str(&env, "Anywhere"),
+            &String::from_str(&env, "RETAIL"),
+            &String::from_str(&env, "abcd"),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_private_event_multisig_is_staged_as_pending() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, SupplyLinkContract);
+        let client = SupplyLinkContractClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        let actor = Address::generate(&env);
+        let product_id = String::from_str(&env, "priv-product-ms");
+        env.mock_all_auths();
+        client.register_product(
+            &product_id,
+            &String::from_str(&env, "MultiSig Batch"),
+            &String::from_str(&env, "Origin"),
+            &owner,
+            &2,
+        );
+        client.add_authorized_actor(&product_id, &actor, &0);
+
+        let commitment = String::from_str(&env, "deadbeefcafe");
+        client.add_private_tracking_event(
+            &product_id,
+            &actor,
+            &String::from_str(&env, "Port"),
+            &String::from_str(&env, "SHIPPING"),
+            &commitment,
+        );
+
+        // Not yet finalized — sits in the pending queue, still without plaintext.
+        assert_eq!(client.get_tracking_events(&product_id).len(), 0);
+        let pending = client.get_pending_events(&product_id);
+        assert_eq!(pending.len(), 1);
+        let pev = pending.get(0).unwrap();
+        assert!(pev.event.private_metadata);
+        assert_eq!(pev.event.metadata, String::from_str(&env, ""));
+        assert_eq!(pev.event.metadata_commitment, commitment);
     }
 }

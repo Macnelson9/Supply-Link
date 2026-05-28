@@ -1,5 +1,5 @@
-export type EventType = "HARVEST" | "PROCESSING" | "SHIPPING" | "RETAIL";
-export type ProductStatus = "active" | "inactive";
+export type EventType = 'HARVEST' | 'PROCESSING' | 'SHIPPING' | 'RETAIL';
+export type ProductStatus = 'active' | 'inactive';
 
 export interface TemplateStage {
   label: string;
@@ -36,6 +36,16 @@ export interface TrackingEvent {
   timestamp: number;
   eventType: EventType;
   metadata: string;
+  /**
+   * Hex commitment (SHA-256) of the off-chain encrypted metadata payload (#409).
+   * Empty/undefined for public events.
+   */
+  metadataCommitment?: string;
+  /**
+   * true when this event's metadata is private: encrypted off-chain with only
+   * the commitment on-chain (#409). `metadata` is empty for such events.
+   */
+  privateMetadata?: boolean;
   /** true while an on-chain transaction is in-flight (#49) */
   pending?: boolean;
 }
@@ -61,7 +71,7 @@ export interface Notification {
 
 export interface TransactionResult {
   hash: string;
-  status: "success" | "failed" | "pending";
+  status: 'success' | 'failed' | 'pending';
   fee: string;
   timestamp: number;
 }
