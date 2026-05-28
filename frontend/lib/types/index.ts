@@ -74,15 +74,26 @@ export interface TrackingEvent {
 export interface EventPage {
   events: TrackingEvent[];
 export interface PendingEvent {
+  pendingEventId: number;
   productId: string;
   event: TrackingEvent;
   approvals: string[];
   requiredSignatures: number;
   createdAt: number;
+  expiration?: number;
 }
 
+export type NotificationType =
+  | 'TRACKING_EVENT'
+  | 'APPROVAL_PENDING'
+  | 'APPROVAL_FINALIZED'
+  | 'APPROVAL_REJECTED'
+  | 'OWNERSHIP_CHANGED'
+  | 'PRODUCT_RECALLED'
+  | 'CONTRACT_ERROR';
+
 export interface Notification {
-  id: string; // `${productId}-${timestamp}`
+  id: string;
   productId: string;
   productName: string;
   eventType: EventType;
@@ -90,6 +101,8 @@ export interface Notification {
   actor: string;
   timestamp: number;
   read: boolean;
+  notificationType: NotificationType;
+  message?: string;
 }
 
 export interface TransactionResult {
