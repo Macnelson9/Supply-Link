@@ -1,13 +1,15 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
-import { Loader2, AlertTriangle } from "lucide-react";
-import { useStore } from "@/lib/state/store";
-import { transferOwnership } from "@/lib/stellar/client";
-import { stellarAddressSchema } from "@/lib/validators";
+import { useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { Loader2, AlertTriangle } from 'lucide-react';
+import { useStore } from '@/lib/state/store';
+import { transferOwnership } from '@/lib/stellar/client';
+import { stellarAddressSchema } from '@/lib/validators';
+import { invalidateProductCache } from '@/lib/services/productReadModel';
+import { recordApprovalEvent } from '@/lib/api/approvalLog';
 
 const schema = z.object({
   newOwner: stellarAddressSchema,
@@ -31,10 +33,10 @@ export function TransferOwnershipForm({
   const walletAddress = useStore((s) => s.walletAddress);
   const updateProductOwner = useStore((s) => s.updateProductOwner);
 
-  const [step, setStep] = useState<"form" | "confirm">("form");
+  const [step, setStep] = useState<'form' | 'confirm'>('form');
   const [submitting, setSubmitting] = useState(false);
-  const [txError, setTxError] = useState("");
-  const [pendingOwner, setPendingOwner] = useState("");
+  const [txError, setTxError] = useState('');
+  const [pendingOwner, setPendingOwner] = useState('');
 
   const {
     register,
@@ -48,32 +50,47 @@ export function TransferOwnershipForm({
       return; // contract would reject this — Zod can't catch it without knowing currentOwner
     }
     setPendingOwner(newOwner.toUpperCase());
-    setStep("confirm");
+    setStep('confirm');
   }
 
   // Step 2: confirmed — call the contract
   async function onConfirm() {
     if (!walletAddress) {
-      setTxError("Connect your wallet first.");
-      setStep("form");
+      setTxError('Connect your wallet first.');
+      setStep('form');
       return;
     }
     setSubmitting(true);
-    setTxError("");
+    setTxError('');
     try {
       await transferOwnership(productId, pendingOwner, walletAddress);
+      invalidateProductCache(productId);
+      recordApprovalEvent({
+        action: 'transfer_ownership',
+        productId,
+        actor: walletAddress,
+        target: pendingOwner,
+        success: true,
+      });
       updateProductOwner(productId, pendingOwner);
       onSuccess?.();
     } catch {
-      setTxError("Transaction failed. Please try again.");
-      setStep("form");
+      recordApprovalEvent({
+        action: 'transfer_ownership',
+        productId,
+        actor: walletAddress,
+        target: pendingOwner,
+        success: false,
+      });
+      setTxError('Transaction failed. Please try again.');
+      setStep('form');
     } finally {
       setSubmitting(false);
     }
   }
 
   // ── Confirmation dialog ────────────────────────────────────────────────────
-  if (step === "confirm") {
+  if (step === 'confirm') {
     return (
       <div className="flex flex-col gap-5">
         <div className="flex gap-3 p-4 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
@@ -81,7 +98,7 @@ export function TransferOwnershipForm({
           <div className="text-sm text-amber-800 dark:text-amber-300 space-y-1">
             <p className="font-semibold">This cannot be undone.</p>
             <p>
-              You are transferring ownership of{" "}
+              You are transferring ownership of{' '}
               <span className="font-mono font-medium">{productId}</span> to:
             </p>
             <p className="font-mono break-all text-xs mt-1">{pendingOwner}</p>
@@ -92,7 +109,7 @@ export function TransferOwnershipForm({
 
         <div className="flex justify-end gap-3">
           <button
-            onClick={() => setStep("form")}
+            onClick={() => setStep('form')}
             disabled={submitting}
             className="px-4 py-2 text-sm rounded-md border border-[var(--card-border)] hover:bg-[var(--muted-bg)] text-[var(--foreground)] disabled:opacity-40"
           >
@@ -115,21 +132,17 @@ export function TransferOwnershipForm({
   return (
     <form onSubmit={handleSubmit(onFormSubmit)} className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
-        <label className="text-sm font-medium text-[var(--foreground)]">
-          New owner address
-        </label>
+        <label className="text-sm font-medium text-[var(--foreground)]">New owner address</label>
         <input
-          {...register("newOwner")}
+          {...register('newOwner')}
           type="text"
           placeholder="G… (56 characters)"
           autoComplete="off"
           spellCheck={false}
           className="border border-[var(--card-border)] bg-[var(--background)] text-[var(--foreground)] rounded-md px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--primary)] aria-[invalid=true]:border-red-500"
-          aria-invalid={errors.newOwner ? "true" : "false"}
+          aria-invalid={errors.newOwner ? 'true' : 'false'}
         />
-        {errors.newOwner && (
-          <p className="text-xs text-red-500">{errors.newOwner.message}</p>
-        )}
+        {errors.newOwner && <p className="text-xs text-red-500">{errors.newOwner.message}</p>}
       </div>
 
       {txError && <p className="text-xs text-red-500">{txError}</p>}

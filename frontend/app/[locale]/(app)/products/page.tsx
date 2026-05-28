@@ -7,7 +7,9 @@ import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { Search, Plus, Package, ChevronDown, Upload, RefreshCw, Download } from 'lucide-react';
 import { exportToCSV, exportToJSON } from '@/lib/utils/export';
 import * as Select from '@radix-ui/react-select';
-import { useStore, selectFilteredProducts } from '@/lib/state/store';
+import { useStore, useFilteredProducts } from '@/lib/state/store';
+import { usePaginatedList } from '@/lib/hooks/usePaginatedList';
+import { Pagination } from '@/components/ui/Pagination';
 import { useProducts } from '@/lib/hooks/useProducts';
 import { RegisterProductForm } from '@/components/products/RegisterProductForm';
 import { BatchImportForm } from '@/components/products/BatchImportForm';
@@ -15,9 +17,6 @@ import { CompareBar } from '@/components/products/CompareBar';
 import ProductQRCode from '@/components/products/ProductQRCode';
 import type { EventType } from '@/lib/types';
 import { EVENT_TYPE_CONFIG } from '@/lib/eventTypeConfig';
-import { PRODUCT_TAXONOMY, getCategoryLabel, getSubcategoryLabel } from '@/lib/taxonomy';
-import { SustainabilityBadge } from '@/components/products/SustainabilityBadge';
-import { CertificationBadge } from '@/components/products/CertificationBadge';
 
 const EVENT_TYPES: EventType[] = ['HARVEST', 'PROCESSING', 'SHIPPING', 'RETAIL'];
 
@@ -72,7 +71,11 @@ export default function ProductsPage() {
     setSortBy,
     setSortOrder,
   } = useStore();
-  const filtered = useStore(selectFilteredProducts);
+  const filtered = useFilteredProducts();
+  const { pageItems, page, pageSize, total, goToPage, changePageSize } = usePaginatedList(
+    filtered,
+    20,
+  );
   const events = useStore((s) => s.events);
 
   const [registerOpen, setRegisterOpen] = useState(false);
@@ -115,7 +118,7 @@ export default function ProductsPage() {
         <div>
           <h1 className="text-2xl font-bold text-[var(--foreground)]">Products</h1>
           <p className="text-sm text-[var(--muted)] mt-1">
-            {loading ? 'Loading…' : `${filtered.length} product${filtered.length !== 1 ? 's' : ''}`}
+            {loading ? 'Loading…' : `${total} product${total !== 1 ? 's' : ''}`}
           </p>
         </div>
         <div className="flex flex-wrap gap-2 self-start sm:self-auto">
@@ -302,19 +305,13 @@ export default function ProductsPage() {
             <ProductSkeleton key={i} />
           ))}
         </div>
-      ) : filtered.filter((p) => !filterCategory || p.category === filterCategory).length === 0 ? (
-        <EmptyState
-          hasSearch={searchQuery !== '' || filterCategory !== null}
-          onRegister={() => setRegisterOpen(true)}
-        />
+      ) : filtered.length === 0 ? (
+        <EmptyState hasSearch={searchQuery !== ''} onRegister={() => setRegisterOpen(true)} />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filtered
-            .filter((p) => !filterCategory || p.category === filterCategory)
-            .map((product) => {
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {pageItems.map((product) => {
               const isSelected = compareIds.includes(product.id);
-              const productEvents = events.filter((e) => e.productId === product.id);
-              const activeCerts = (product.certifications ?? []).filter((c) => !c.revoked);
               return (
                 <div key={product.id} className="relative group">
                   {/* Compare checkbox */}
@@ -367,33 +364,7 @@ export default function ProductsPage() {
                       <p className="text-xs text-[var(--muted)] mt-1 font-mono truncate">
                         ID: {product.id}
                       </p>
-                      {product.category && (
-                        <p className="text-xs text-[var(--muted)] mt-1">
-                          <span className="px-1.5 py-0.5 rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-400 font-medium">
-                            {getCategoryLabel(product.category)}
-                            {product.subcategory &&
-                              ` › ${getSubcategoryLabel(product.category, product.subcategory)}`}
-                          </span>
-                        </p>
-                      )}
                     </div>
-                    {/* Sustainability badge (#426) */}
-                    {productEvents.length > 0 && (
-                      <SustainabilityBadge events={productEvents} compact />
-                    )}
-                    {/* Certification badges (#428) */}
-                    {activeCerts.length > 0 && (
-                      <div className="flex flex-wrap gap-1">
-                        {activeCerts.slice(0, 3).map((cert) => (
-                          <CertificationBadge key={cert.id} certification={cert} compact />
-                        ))}
-                        {activeCerts.length > 3 && (
-                          <span className="text-xs text-[var(--muted)]">
-                            +{activeCerts.length - 3}
-                          </span>
-                        )}
-                      </div>
-                    )}
                     {product.imageUrl && (
                       <div className="relative w-full h-36 rounded-lg overflow-hidden">
                         <Image
@@ -409,7 +380,15 @@ export default function ProductsPage() {
                 </div>
               );
             })}
-        </div>
+          </div>
+          <Pagination
+            currentPage={page}
+            pageSize={pageSize}
+            total={total}
+            onPageChange={goToPage}
+            onPageSizeChange={changePageSize}
+          />
+        </>
       )}
 
       <RegisterProductForm open={registerOpen} onOpenChange={setRegisterOpen} />

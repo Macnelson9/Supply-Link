@@ -11,21 +11,13 @@ import { useStore } from '@/lib/state/store';
 import { useToast } from '@/lib/hooks/useToast';
 import { ImageUpload } from '@/components/products/ImageUpload';
 import { productIdSchema } from '@/lib/validators';
-import { PRODUCT_TAXONOMY, isValidSubcategory } from '@/lib/taxonomy';
 
-const schema = z
-  .object({
-    id: productIdSchema,
-    name: z.string().min(2, 'Name must be at least 2 characters'),
-    origin: z.string().min(2, 'Origin is required'),
-    description: z.string().optional(),
-    category: z.string().min(1, 'Category is required'),
-    subcategory: z.string().min(1, 'Subcategory is required'),
-  })
-  .refine((data) => isValidSubcategory(data.category, data.subcategory), {
-    message: 'Invalid subcategory for selected category',
-    path: ['subcategory'],
-  });
+const schema = z.object({
+  id: productIdSchema,
+  name: z.string().min(2, 'Name must be at least 2 characters'),
+  origin: z.string().min(2, 'Origin is required'),
+  description: z.string().optional(),
+});
 
 type FormValues = z.infer<typeof schema>;
 
@@ -43,6 +35,26 @@ export function RegisterProductForm({ open, onOpenChange }: Props) {
   const toast = useToast();
   const [pending, setPending] = useState(false);
   const [imageUrl, setImageUrl] = useState<string | undefined>();
+  const [isOnline, setIsOnline] = useState(
+    typeof navigator !== 'undefined' ? navigator.onLine : true,
+  );
+
+  const { draft, saveDraft, clearDraft } = useOfflineDraft<FormValues>('register-product-draft');
+
+  useEffect(() => {
+    function onOnline() {
+      setIsOnline(true);
+    }
+    function onOffline() {
+      setIsOnline(false);
+    }
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
 
   const {
     register,
@@ -50,15 +62,18 @@ export function RegisterProductForm({ open, onOpenChange }: Props) {
     setValue,
     watch,
     reset,
+    watch,
     formState: { errors },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { id: generateId(), category: '', subcategory: '' },
+    defaultValues: draft ?? { id: generateId() },
   });
 
-  const selectedCategory = watch('category');
-  const subcategories =
-    PRODUCT_TAXONOMY.find((c) => c.id === selectedCategory)?.subcategories ?? [];
+  const formValues = watch();
+
+  useEffect(() => {
+    if (open) saveDraft(formValues);
+  }, [JSON.stringify(formValues), open]);
 
   async function onSubmit(values: FormValues) {
     if (!walletAddress) {
@@ -93,7 +108,8 @@ export function RegisterProductForm({ open, onOpenChange }: Props) {
 
       toast.dismiss(toastId);
       toast.success(`"${values.name}" registered successfully`, txHash);
-      reset({ id: generateId(), category: '', subcategory: '' });
+      clearDraft();
+      reset({ id: generateId() });
       setImageUrl(undefined);
       onOpenChange(false);
     } catch (err) {
@@ -111,17 +127,46 @@ export function RegisterProductForm({ open, onOpenChange }: Props) {
         <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md bg-[var(--background)] border border-[var(--card-border)] rounded-2xl p-6 shadow-xl">
           <div className="flex items-center justify-between mb-6">
             <Dialog.Title className="text-lg font-semibold">Register New Product</Dialog.Title>
-            <Dialog.Close className="p-1 rounded-lg hover:bg-[var(--muted-bg)] transition-colors">
-              <X size={18} />
+            <Dialog.Close
+              className="p-1 rounded-lg hover:bg-[var(--muted-bg)] transition-colors"
+              aria-label="Close dialog"
+            >
+              <X size={18} aria-hidden />
             </Dialog.Close>
           </div>
+
+          {!isOnline && (
+            <div className="mb-4 flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-600 text-xs">
+              <WifiOff size={13} />
+              You are offline. Registration will be queued and synced when connectivity returns.
+            </div>
+          )}
+
+          {draft && (
+            <div className="mb-4 flex items-center justify-between px-3 py-2 rounded-lg bg-violet-500/10 border border-violet-500/20 text-violet-600 text-xs">
+              <span>Draft restored from a previous session.</span>
+              <button
+                type="button"
+                onClick={() => {
+                  clearDraft();
+                  reset({ id: generateId() });
+                }}
+                className="underline hover:no-underline ml-2"
+              >
+                Discard
+              </button>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
             {/* Product ID */}
             <div className="flex flex-col gap-1">
-              <label className="text-sm font-medium">Product ID</label>
+              <label htmlFor="register-product-id" className="text-sm font-medium">
+                Product ID
+              </label>
               <div className="flex gap-2">
                 <input
+                  id="register-product-id"
                   {...register('id')}
                   className="flex-1 px-3 py-2 rounded-lg border border-[var(--card-border)] bg-[var(--card)] text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-500"
                 />
@@ -129,42 +174,61 @@ export function RegisterProductForm({ open, onOpenChange }: Props) {
                   type="button"
                   onClick={() => setValue('id', generateId())}
                   className="p-2 rounded-lg border border-[var(--card-border)] hover:bg-[var(--muted-bg)] transition-colors"
-                  title="Regenerate ID"
+                  aria-label="Regenerate ID"
                 >
-                  <RefreshCw size={16} />
+                  <RefreshCw size={16} aria-hidden />
                 </button>
               </div>
-              {errors.id && <p className="text-xs text-red-500">{errors.id.message}</p>}
+              {errors.id && (
+                <p className="text-xs text-red-500" role="alert">
+                  {errors.id.message}
+                </p>
+              )}
             </div>
 
             {/* Name */}
             <div className="flex flex-col gap-1">
-              <label className="text-sm font-medium">Name</label>
+              <label htmlFor="register-product-name" className="text-sm font-medium">
+                Name
+              </label>
               <input
+                id="register-product-name"
                 {...register('name')}
                 placeholder="e.g. Organic Coffee Beans"
                 className="px-3 py-2 rounded-lg border border-[var(--card-border)] bg-[var(--card)] text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
               />
-              {errors.name && <p className="text-xs text-red-500">{errors.name.message}</p>}
+              {errors.name && (
+                <p className="text-xs text-red-500" role="alert">
+                  {errors.name.message}
+                </p>
+              )}
             </div>
 
             {/* Origin */}
             <div className="flex flex-col gap-1">
-              <label className="text-sm font-medium">Origin</label>
+              <label htmlFor="register-product-origin" className="text-sm font-medium">
+                Origin
+              </label>
               <input
+                id="register-product-origin"
                 {...register('origin')}
                 placeholder="e.g. Ethiopia"
                 className="px-3 py-2 rounded-lg border border-[var(--card-border)] bg-[var(--card)] text-sm focus:outline-none focus:ring-2 focus:ring-violet-500"
               />
-              {errors.origin && <p className="text-xs text-red-500">{errors.origin.message}</p>}
+              {errors.origin && (
+                <p className="text-xs text-red-500" role="alert">
+                  {errors.origin.message}
+                </p>
+              )}
             </div>
 
             {/* Description */}
             <div className="flex flex-col gap-1">
-              <label className="text-sm font-medium">
+              <label htmlFor="register-product-description" className="text-sm font-medium">
                 Description <span className="text-[var(--muted)] font-normal">(optional)</span>
               </label>
               <textarea
+                id="register-product-description"
                 {...register('description')}
                 rows={3}
                 placeholder="Additional details about the product…"
