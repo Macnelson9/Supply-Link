@@ -341,6 +341,25 @@ pub struct ApprovalHop {
     pub metadata: String,
 }
 
+/// An origin attestation for a product. (#500)
+/// Proves where goods came from with cryptographic proof.
+#[contracttype]
+#[derive(Clone)]
+pub struct OriginAttestation {
+    /// ID of the product being attested.
+    pub product_id: String,
+    /// Address of the actor attesting to the origin.
+    pub attester: Address,
+    /// Description of the origin (e.g., "Ethiopian highlands, Yirgacheffe region").
+    pub origin_claim: String,
+    /// Cryptographic hash of supporting documentation.
+    pub proof_hash: String,
+    /// Timestamp when the attestation was recorded.
+    pub timestamp: u64,
+    /// Whether this attestation has been verified.
+    pub verified: bool,
+}
+
 // ── Storage keys ─────────────────────────────────────────────────────────────
 
 #[contracttype]
@@ -371,6 +390,8 @@ pub enum DataKey {
     CompliancePolicy(String),
     /// Key for approval hops in the chain-of-custody. The inner `String` is the product ID. (#499)
     ApprovalHops(String),
+    /// Key for origin attestations. The inner `String` is the product ID. (#500)
+    OriginAttestations(String),
 }
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -1301,6 +1322,132 @@ o            actor: caller,
             }
         }
         true
+    }
+
+    // ── #500: Origin attestations ────────────────────────────────────────────
+
+    /// Record an origin attestation for a product.
+    /// Proves where goods came from with cryptographic proof.
+    ///
+    /// # Parameters
+    /// - `env` — Soroban execution environment.
+    /// - `product_id` — ID of the product.
+    /// - `attester` — Address of the actor attesting to the origin.
+    /// - `origin_claim` — Description of the origin (e.g., "Ethiopian highlands, Yirgacheffe region").
+    /// - `proof_hash` — Cryptographic hash of supporting documentation.
+    ///
+    /// # Returns
+    /// The origin attestation record.
+    ///
+    /// # Authorization
+    /// Requires `attester.require_auth()`.
+    ///
+    /// # Panics
+    /// - `"product not found"` — if `product_id` is not registered.
+    pub fn attest_origin(
+        env: Env,
+        product_id: String,
+        attester: Address,
+        origin_claim: String,
+        proof_hash: String,
+    ) -> OriginAttestation {
+        let _product: Product = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Product(product_id.clone()))
+            .expect("product not found");
+
+        attester.require_auth();
+
+        let attestation = OriginAttestation {
+            product_id: product_id.clone(),
+            attester: attester.clone(),
+            origin_claim,
+            proof_hash,
+            timestamp: env.ledger().timestamp(),
+            verified: false,
+        };
+
+        let mut attestations: Vec<OriginAttestation> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OriginAttestations(product_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        attestations.push_back(attestation.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::OriginAttestations(product_id.clone()), &attestations);
+
+        env.events().publish(
+            (Symbol::new(&env, "origin_attested"), product_id),
+            attestation.clone(),
+        );
+
+        attestation
+    }
+
+    /// Verify an origin attestation for a product.
+    /// Marks an attestation as verified by an authorized verifier.
+    ///
+    /// # Parameters
+    /// - `env` — Soroban execution environment.
+    /// - `product_id` — ID of the product.
+    /// - `attestation_index` — Index of the attestation to verify.
+    /// - `verifier` — Address of the verifier (typically product owner or auditor).
+    ///
+    /// # Returns
+    /// `true` if verification succeeded, `false` if attestation not found.
+    ///
+    /// # Authorization
+    /// Requires `verifier.require_auth()`.
+    pub fn verify_origin_attestation(
+        env: Env,
+        product_id: String,
+        attestation_index: u32,
+        verifier: Address,
+    ) -> bool {
+        verifier.require_auth();
+
+        let mut attestations: Vec<OriginAttestation> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OriginAttestations(product_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        if attestation_index as usize >= attestations.len() {
+            return false;
+        }
+
+        let mut attestation = attestations.get(attestation_index as usize).unwrap();
+        attestation.verified = true;
+
+        attestations.set(attestation_index as usize, attestation.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::OriginAttestations(product_id.clone()), &attestations);
+
+        env.events().publish(
+            (Symbol::new(&env, "origin_verified"), product_id),
+            attestation,
+        );
+
+        true
+    }
+
+    /// Retrieve all origin attestations for a product.
+    ///
+    /// # Parameters
+    /// - `env` — Soroban execution environment.
+    /// - `product_id` — ID of the product.
+    ///
+    /// # Returns
+    /// Vector of all origin attestations for the product.
+    pub fn get_origin_attestations(env: Env, product_id: String) -> Vec<OriginAttestation> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::OriginAttestations(product_id))
+            .unwrap_or_else(|| Vec::new(&env))
     }
 }
 
