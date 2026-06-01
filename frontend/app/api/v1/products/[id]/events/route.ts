@@ -16,6 +16,12 @@ import { withIdempotency } from '@/lib/api/idempotency';
 import { getProductById, getEventsByProductId, MOCK_EVENTS } from '@/lib/mock/products';
 import { recordRequest } from '@/lib/api/metrics';
 import { validateEventMetadata } from '@/lib/api/eventMetadataSchemas';
+import {
+  claimEventSequence,
+  getEventSequence,
+  EventSequenceConflictError,
+} from '@/lib/api/eventSequence';
+import { enqueue } from '@/lib/jobs/queue';
 import type { TrackingEvent, PaginatedResponse, EventType } from '@/lib/types';
 
 export function OPTIONS(request: NextRequest) {
@@ -105,6 +111,34 @@ async function addEvent(
     );
   }
 
+  // ── Sequence enforcement (#476) ───────────────────────────────────────────
+  // Clients must include the expected sequence number to prevent concurrent
+  // submissions from creating inconsistent event histories.
+  const claimedSeq = typeof body.seq === 'number' ? body.seq : null;
+  if (claimedSeq === null) {
+    return apiError(
+      req,
+      400,
+      ErrorCode.MISSING_FIELDS,
+      'Missing required field: seq (fetch current sequence from GET /api/v1/products/{id}/events/sequence)',
+    );
+  }
+
+  let acceptedSeq: number;
+  try {
+    acceptedSeq = await claimEventSequence(productId, claimedSeq);
+  } catch (err) {
+    if (err instanceof EventSequenceConflictError) {
+      return apiError(
+        req,
+        409,
+        ErrorCode.VALIDATION_ERROR,
+        `Event sequence conflict: expected ${err.conflict.expectedSeq}, received ${err.conflict.receivedSeq}. Fetch the latest sequence and retry.`,
+      );
+    }
+    throw err;
+  }
+
   // Create new event
   const newEvent: TrackingEvent = {
     productId,
@@ -113,10 +147,15 @@ async function addEvent(
     actor: body.actor as string,
     timestamp: Date.now(),
     metadata,
+    seq: acceptedSeq,
   };
 
   // TODO: Persist to database instead of mock
   MOCK_EVENTS.push(newEvent);
+
+  // Enqueue async validation job (#475)
+  const stableId = newEvent.stableId ?? `${productId}-${acceptedSeq}-${newEvent.timestamp}`;
+  await enqueue('event.validate', { event: { ...newEvent, stableId }, stableId });
 
   return withCors(req, withCorrelationId(req, NextResponse.json(newEvent, { status: 201 })));
 }

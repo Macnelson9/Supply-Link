@@ -31,3 +31,32 @@ registerHandler<Record<string, never>>('indexer.tick', async () => {
   const result = await runIndexerTick();
   console.log(`[jobs] indexer.tick indexed=${result.indexed} ledger=${result.toledger}`);
 });
+
+// ── Async event validation (#475) ─────────────────────────────────────────────
+import type { TrackingEvent } from '@/lib/types';
+import { kvStore } from '@/lib/kv';
+import { runValidationTasks } from './validationTasks';
+
+export interface EventValidationPayload {
+  event: TrackingEvent;
+  stableId: string;
+}
+
+const VALIDATION_TTL = 7 * 24 * 60 * 60; // 7 days
+const kvValidationKey = (stableId: string) => `validation:${stableId}`;
+
+registerHandler<EventValidationPayload>('event.validate', async (job) => {
+  const { event, stableId } = job.payload;
+  const { status, checks } = await runValidationTasks(event);
+
+  const result = {
+    eventStableId: stableId,
+    productId: event.productId,
+    status,
+    checks,
+    validatedAt: Date.now(),
+  };
+
+  await kvStore.set(kvValidationKey(stableId), JSON.stringify(result), VALIDATION_TTL);
+  console.log(`[jobs] event.validate stableId=${stableId} status=${status}`);
+});
