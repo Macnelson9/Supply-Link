@@ -116,10 +116,7 @@ export async function DELETE(
     request,
     withCorrelationId(
       request,
-      NextResponse.json(
-        { attestationId, revoked: true, revokedAt: Date.now() },
-        { status: 200 },
-      ),
+      NextResponse.json({ attestationId, revoked: true, revokedAt: Date.now() }, { status: 200 }),
     ),
   );
   recordRequest('DELETE /api/v1/attestations/[id]', response.status, Date.now() - start);

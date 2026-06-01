@@ -1,10 +1,11 @@
-import Link from "next/link";
-import { ThemeToggle } from "./ThemeToggle";
+import Link from 'next/link';
+import { ThemeToggle } from './ThemeToggle';
 
 const NAV_LINKS = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/products", label: "Products" },
-  { href: "/tracking", label: "Tracking" },
+  { href: '/dashboard', label: 'Dashboard' },
+  { href: '/products', label: 'Products' },
+  { href: '/tracking', label: 'Tracking' },
+  { href: '/reports', label: 'Reports' },
 ];
 
 export function Navbar() {
@@ -12,7 +13,10 @@ export function Navbar() {
     <nav className="border-b border-[var(--card-border)] bg-[var(--background)] sticky top-0 z-40">
       <div className="max-w-5xl mx-auto px-6 h-14 flex items-center justify-between">
         <div className="flex items-center gap-6">
-          <Link href="/dashboard" className="font-semibold text-sm tracking-tight text-[var(--foreground)]">
+          <Link
+            href="/dashboard"
+            className="font-semibold text-sm tracking-tight text-[var(--foreground)]"
+          >
             Supply-Link
           </Link>
           <div className="flex items-center gap-4">

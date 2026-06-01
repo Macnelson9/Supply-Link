@@ -71,7 +71,8 @@ export function ProvenancePricingPanel({ product, events }: Props) {
       <div className="flex items-center justify-between text-sm">
         <span className="text-[var(--muted)]">Price adjustment</span>
         <span className={`font-mono ${diffColor}`}>
-          {diffSign}{formatPrice(Math.abs(priceDiff), result.currency)}
+          {diffSign}
+          {formatPrice(Math.abs(priceDiff), result.currency)}
         </span>
       </div>
 

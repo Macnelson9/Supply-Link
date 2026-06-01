@@ -127,9 +127,7 @@ describe('GET /api/v1/events/export', () => {
   });
 
   it('caps limit at 500', async () => {
-    const req = makeRequest(
-      'http://localhost/api/v1/events/export?productId=prod-001&limit=9999',
-    );
+    const req = makeRequest('http://localhost/api/v1/events/export?productId=prod-001&limit=9999');
     const res = await GET(req);
     const body = await res.json();
     expect(body.limit).toBe(500);

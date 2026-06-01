@@ -41,7 +41,10 @@ export function ValidationStatusBadge({ status }: Props) {
       className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${className}`}
     >
       {status === 'pending' && (
-        <span className="inline-block h-1.5 w-1.5 rounded-full bg-yellow-500 animate-pulse" aria-hidden="true" />
+        <span
+          className="inline-block h-1.5 w-1.5 rounded-full bg-yellow-500 animate-pulse"
+          aria-hidden="true"
+        />
       )}
       {label}
     </span>

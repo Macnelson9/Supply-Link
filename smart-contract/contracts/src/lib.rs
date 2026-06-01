@@ -328,6 +328,42 @@ pub struct Batch {
     pub timestamp: u64,
 }
 
+/// An approval hop in the chain-of-custody for a product. (#499)
+/// Records each actor's approval as the product moves through the supply chain.
+#[contracttype]
+#[derive(Clone)]
+pub struct ApprovalHop {
+    /// ID of the product being approved.
+    pub product_id: String,
+    /// Address of the actor approving the product.
+    pub approver: Address,
+    /// Type of approval (e.g., "RECEIVED", "INSPECTED", "SHIPPED").
+    pub approval_type: String,
+    /// Timestamp when the approval was recorded.
+    pub timestamp: u64,
+    /// Optional JSON metadata about the approval.
+    pub metadata: String,
+}
+
+/// An origin attestation for a product. (#500)
+/// Proves where goods came from with cryptographic proof.
+#[contracttype]
+#[derive(Clone)]
+pub struct OriginAttestation {
+    /// ID of the product being attested.
+    pub product_id: String,
+    /// Address of the actor attesting to the origin.
+    pub attester: Address,
+    /// Description of the origin (e.g., "Ethiopian highlands, Yirgacheffe region").
+    pub origin_claim: String,
+    /// Cryptographic hash of supporting documentation.
+    pub proof_hash: String,
+    /// Timestamp when the attestation was recorded.
+    pub timestamp: u64,
+    /// Whether this attestation has been verified.
+    pub verified: bool,
+}
+
 /// An off-chain document anchored on-chain by its SHA-256 hash. (#460)
 ///
 /// Callers compute the SHA-256 hash of the document bytes off-chain and submit
@@ -495,6 +531,10 @@ pub enum DataKey {
     ActorNonce(Address),
     /// Key for the compliance policy of a product. The inner `String` is the product ID.
     CompliancePolicy(String),
+    /// Key for approval hops in the chain-of-custody. The inner `String` is the product ID. (#499)
+    ApprovalHops(String),
+    /// Key for origin attestations. The inner `String` is the product ID. (#500)
+    OriginAttestations(String),
     /// Key for document anchors for a product. The inner `String` is the product ID. (#460)
     DocumentAnchors(String),
     /// Key for event timestamp certifications for a product. (#503)
@@ -1351,6 +1391,244 @@ o            actor: caller,
             escrow.clone(),
         );
         escrow
+    }
+
+    // ── #499: Multi-hop approval chain-of-custody ────────────────────────────
+
+    /// Record an approval hop in the chain-of-custody for a product.
+    /// Each actor in the supply chain signs to approve the product's current state.
+    ///
+    /// # Parameters
+    /// - `env` — Soroban execution environment.
+    /// - `product_id` — ID of the product being approved.
+    /// - `approver` — Address of the actor approving the product.
+    /// - `approval_type` — Type of approval (e.g., "RECEIVED", "INSPECTED", "SHIPPED").
+    /// - `metadata` — Optional JSON metadata about the approval.
+    ///
+    /// # Returns
+    /// The approval hop record with timestamp and approver info.
+    ///
+    /// # Authorization
+    /// Requires `approver.require_auth()`.
+    ///
+    /// # Panics
+    /// - `"product not found"` — if `product_id` is not registered.
+    pub fn record_approval_hop(
+        env: Env,
+        product_id: String,
+        approver: Address,
+        approval_type: String,
+        metadata: String,
+    ) -> ApprovalHop {
+        let product: Product = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Product(product_id.clone()))
+            .expect("product not found");
+
+        approver.require_auth();
+
+        let hop = ApprovalHop {
+            product_id: product_id.clone(),
+            approver: approver.clone(),
+            approval_type: approval_type.clone(),
+            timestamp: env.ledger().timestamp(),
+            metadata,
+        };
+
+        let mut hops: Vec<ApprovalHop> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ApprovalHops(product_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        hops.push_back(hop.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::ApprovalHops(product_id.clone()), &hops);
+
+        env.events().publish(
+            (Symbol::new(&env, "approval_hop_recorded"), product_id),
+            hop.clone(),
+        );
+
+        hop
+    }
+
+    /// Retrieve all approval hops for a product's chain-of-custody.
+    ///
+    /// # Parameters
+    /// - `env` — Soroban execution environment.
+    /// - `product_id` — ID of the product.
+    ///
+    /// # Returns
+    /// Vector of all approval hops in chronological order.
+    pub fn get_approval_hops(env: Env, product_id: String) -> Vec<ApprovalHop> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ApprovalHops(product_id))
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// Verify the chain-of-custody for a product by checking approval hops.
+    ///
+    /// # Parameters
+    /// - `env` — Soroban execution environment.
+    /// - `product_id` — ID of the product.
+    /// - `required_approvers` — Vector of addresses that must have approved.
+    ///
+    /// # Returns
+    /// `true` if all required approvers have recorded an approval hop, `false` otherwise.
+    pub fn verify_chain_of_custody(
+        env: Env,
+        product_id: String,
+        required_approvers: Vec<Address>,
+    ) -> bool {
+        let hops: Vec<ApprovalHop> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ApprovalHops(product_id))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        for required in required_approvers.iter() {
+            let mut found = false;
+            for hop in hops.iter() {
+                if hop.approver == required {
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                return false;
+            }
+        }
+        true
+    }
+
+    // ── #500: Origin attestations ────────────────────────────────────────────
+
+    /// Record an origin attestation for a product.
+    /// Proves where goods came from with cryptographic proof.
+    ///
+    /// # Parameters
+    /// - `env` — Soroban execution environment.
+    /// - `product_id` — ID of the product.
+    /// - `attester` — Address of the actor attesting to the origin.
+    /// - `origin_claim` — Description of the origin (e.g., "Ethiopian highlands, Yirgacheffe region").
+    /// - `proof_hash` — Cryptographic hash of supporting documentation.
+    ///
+    /// # Returns
+    /// The origin attestation record.
+    ///
+    /// # Authorization
+    /// Requires `attester.require_auth()`.
+    ///
+    /// # Panics
+    /// - `"product not found"` — if `product_id` is not registered.
+    pub fn attest_origin(
+        env: Env,
+        product_id: String,
+        attester: Address,
+        origin_claim: String,
+        proof_hash: String,
+    ) -> OriginAttestation {
+        let _product: Product = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Product(product_id.clone()))
+            .expect("product not found");
+
+        attester.require_auth();
+
+        let attestation = OriginAttestation {
+            product_id: product_id.clone(),
+            attester: attester.clone(),
+            origin_claim,
+            proof_hash,
+            timestamp: env.ledger().timestamp(),
+            verified: false,
+        };
+
+        let mut attestations: Vec<OriginAttestation> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OriginAttestations(product_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        attestations.push_back(attestation.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::OriginAttestations(product_id.clone()), &attestations);
+
+        env.events().publish(
+            (Symbol::new(&env, "origin_attested"), product_id),
+            attestation.clone(),
+        );
+
+        attestation
+    }
+
+    /// Verify an origin attestation for a product.
+    /// Marks an attestation as verified by an authorized verifier.
+    ///
+    /// # Parameters
+    /// - `env` — Soroban execution environment.
+    /// - `product_id` — ID of the product.
+    /// - `attestation_index` — Index of the attestation to verify.
+    /// - `verifier` — Address of the verifier (typically product owner or auditor).
+    ///
+    /// # Returns
+    /// `true` if verification succeeded, `false` if attestation not found.
+    ///
+    /// # Authorization
+    /// Requires `verifier.require_auth()`.
+    pub fn verify_origin_attestation(
+        env: Env,
+        product_id: String,
+        attestation_index: u32,
+        verifier: Address,
+    ) -> bool {
+        verifier.require_auth();
+
+        let mut attestations: Vec<OriginAttestation> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OriginAttestations(product_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        if attestation_index as usize >= attestations.len() {
+            return false;
+        }
+
+        let mut attestation = attestations.get(attestation_index as usize).unwrap();
+        attestation.verified = true;
+
+        attestations.set(attestation_index as usize, attestation.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::OriginAttestations(product_id.clone()), &attestations);
+
+        env.events().publish(
+            (Symbol::new(&env, "origin_verified"), product_id),
+            attestation,
+        );
+
+        true
+    }
+
+    /// Retrieve all origin attestations for a product.
+    ///
+    /// # Parameters
+    /// - `env` — Soroban execution environment.
+    /// - `product_id` — ID of the product.
+    ///
+    /// # Returns
+    /// Vector of all origin attestations for the product.
+    pub fn get_origin_attestations(env: Env, product_id: String) -> Vec<OriginAttestation> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::OriginAttestations(product_id))
+            .unwrap_or_else(|| Vec::new(&env))
     }
 }
 

@@ -35,7 +35,11 @@ export const checkMetadataValid: ValidationTask = async (event) => {
       message: hasKeys ? undefined : 'Event metadata is empty',
     };
   } catch {
-    return { name: 'metadata_valid', status: 'failed', message: 'Event metadata is not valid JSON' };
+    return {
+      name: 'metadata_valid',
+      status: 'failed',
+      message: 'Event metadata is not valid JSON',
+    };
   }
 };
 
@@ -46,7 +50,8 @@ export const checkCertificationCompliance: ValidationTask = async (event) => {
   }
   try {
     const parsed = JSON.parse(event.metadata);
-    const hasCert = typeof parsed.certification_level === 'string' && parsed.certification_level.length > 0;
+    const hasCert =
+      typeof parsed.certification_level === 'string' && parsed.certification_level.length > 0;
     return {
       name: 'certification_compliance',
       status: hasCert ? 'passed' : 'failed',
@@ -64,7 +69,9 @@ export const checkTimestampAnomaly: ValidationTask = async (event) => {
   return {
     name: 'timestamp_anomaly',
     status: isFuture ? 'failed' : 'passed',
-    message: isFuture ? `Event timestamp is ${event.timestamp - Date.now()}ms in the future` : undefined,
+    message: isFuture
+      ? `Event timestamp is ${event.timestamp - Date.now()}ms in the future`
+      : undefined,
   };
 };
 

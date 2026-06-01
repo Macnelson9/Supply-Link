@@ -44,7 +44,10 @@ export async function GET(
 
   const record = await getApiKeyRecord(keyId);
   if (!record) {
-    const res = withCors(request, apiError(request, 404, ErrorCode.VALIDATION_ERROR, 'API key not found'));
+    const res = withCors(
+      request,
+      apiError(request, 404, ErrorCode.VALIDATION_ERROR, 'API key not found'),
+    );
     recordRequest('GET /api/v1/api-keys/[keyId]', 404, Date.now() - start);
     return res;
   }

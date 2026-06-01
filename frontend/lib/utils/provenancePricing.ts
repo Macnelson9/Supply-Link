@@ -61,8 +61,8 @@ export function formatPrice(amount: number, currency: string): string {
 /** Default adjustment rules used when a product has no custom rules. */
 export const DEFAULT_PRICING_RULES: PricingAdjustmentRule[] = [
   { minScore: 90, maxScore: 100, multiplier: 1.15, label: 'Premium' },
-  { minScore: 75, maxScore: 89,  multiplier: 1.05, label: 'High Quality' },
-  { minScore: 60, maxScore: 74,  multiplier: 1.0,  label: 'Standard' },
-  { minScore: 45, maxScore: 59,  multiplier: 0.95, label: 'Reduced' },
-  { minScore: 0,  maxScore: 44,  multiplier: 0.85, label: 'Discounted' },
+  { minScore: 75, maxScore: 89, multiplier: 1.05, label: 'High Quality' },
+  { minScore: 60, maxScore: 74, multiplier: 1.0, label: 'Standard' },
+  { minScore: 45, maxScore: 59, multiplier: 0.95, label: 'Reduced' },
+  { minScore: 0, maxScore: 44, multiplier: 0.85, label: 'Discounted' },
 ];

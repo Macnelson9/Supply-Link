@@ -166,9 +166,7 @@ export interface TransferComplianceInput {
  * Run all pre-transfer compliance checks and return a structured result.
  * The caller decides whether to block the UI or proceed.
  */
-export function checkTransferCompliance(
-  input: TransferComplianceInput,
-): TransferComplianceResult {
+export function checkTransferCompliance(input: TransferComplianceInput): TransferComplianceResult {
   const { product, newOwner, walletAddress, hasPendingEscrow } = input;
 
   const raw: Array<ComplianceViolation | null> = [
@@ -184,7 +182,8 @@ export function checkTransferCompliance(
   if (hasPendingEscrow) {
     raw.push({
       code: 'PENDING_TRANSFER_EXISTS',
-      message: 'A transfer request is already pending for this product. Cancel it before initiating a new one.',
+      message:
+        'A transfer request is already pending for this product. Cancel it before initiating a new one.',
       blocking: true,
     });
   }

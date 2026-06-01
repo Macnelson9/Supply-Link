@@ -40,10 +40,7 @@ export async function getEventSequence(productId: string): Promise<ProductEventS
  * @returns The accepted sequence number on success.
  * @throws EventSequenceConflictError when claimedSeq doesn't match the current nextSeq.
  */
-export async function claimEventSequence(
-  productId: string,
-  claimedSeq: number,
-): Promise<number> {
+export async function claimEventSequence(productId: string, claimedSeq: number): Promise<number> {
   const current = await getEventSequence(productId);
 
   if (claimedSeq !== current.nextSeq) {

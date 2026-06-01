@@ -73,22 +73,14 @@ export function OPTIONS(request: NextRequest) {
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const start = Date.now();
 
-  const limited = applyRateLimit(
-    request,
-    'POST /api/v1/attestations',
-    RATE_LIMIT_PRESETS.default,
-  );
+  const limited = applyRateLimit(request, 'POST /api/v1/attestations', RATE_LIMIT_PRESETS.default);
   if (limited) {
     recordRequest('POST /api/v1/attestations', 429, Date.now() - start);
     return limited;
   }
 
   // Auditor tier or higher required
-  const auth = await authenticateRegistryKey(
-    request,
-    'auditor',
-    'POST /api/v1/attestations',
-  );
+  const auth = await authenticateRegistryKey(request, 'auditor', 'POST /api/v1/attestations');
   if (auth.error) {
     recordRequest('POST /api/v1/attestations', 401, Date.now() - start);
     return auth.error;
@@ -117,10 +109,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const record = await addAttestation(parsed.data);
 
-    return withCors(
-      req,
-      withCorrelationId(req, NextResponse.json(record, { status: 201 })),
-    );
+    return withCors(req, withCorrelationId(req, NextResponse.json(record, { status: 201 })));
   });
 
   recordRequest('POST /api/v1/attestations', response.status, Date.now() - start);

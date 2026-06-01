@@ -28,12 +28,22 @@ export async function GET(
   const start = Date.now();
   const { id } = await params;
 
-  const limited = applyRateLimit(request, 'GET /api/product/recall/escalation/[id]', RATE_LIMIT_PRESETS.default);
-  if (limited) { recordRequest('GET /api/product/recall/escalation/[id]', 429, Date.now() - start); return limited; }
+  const limited = applyRateLimit(
+    request,
+    'GET /api/product/recall/escalation/[id]',
+    RATE_LIMIT_PRESETS.default,
+  );
+  if (limited) {
+    recordRequest('GET /api/product/recall/escalation/[id]', 429, Date.now() - start);
+    return limited;
+  }
 
   const escalation = getEscalation(id);
   if (!escalation) {
-    return withCors(request, apiError(request, 404, ErrorCode.VALIDATION_ERROR, 'Escalation not found'));
+    return withCors(
+      request,
+      apiError(request, 404, ErrorCode.VALIDATION_ERROR, 'Escalation not found'),
+    );
   }
 
   const res = NextResponse.json({ escalation }, { status: 200 });
@@ -48,8 +58,15 @@ export async function PATCH(
   const start = Date.now();
   const { id } = await params;
 
-  const limited = applyRateLimit(request, 'PATCH /api/product/recall/escalation/[id]', RATE_LIMIT_PRESETS.default);
-  if (limited) { recordRequest('PATCH /api/product/recall/escalation/[id]', 429, Date.now() - start); return limited; }
+  const limited = applyRateLimit(
+    request,
+    'PATCH /api/product/recall/escalation/[id]',
+    RATE_LIMIT_PRESETS.default,
+  );
+  if (limited) {
+    recordRequest('PATCH /api/product/recall/escalation/[id]', 429, Date.now() - start);
+    return limited;
+  }
 
   let body: Record<string, unknown>;
   try {
@@ -68,9 +85,20 @@ export async function PATCH(
   if (!updated) {
     const existing = getEscalation(id);
     if (!existing) {
-      return withCors(request, apiError(request, 404, ErrorCode.VALIDATION_ERROR, 'Escalation not found'));
+      return withCors(
+        request,
+        apiError(request, 404, ErrorCode.VALIDATION_ERROR, 'Escalation not found'),
+      );
     }
-    return withCors(request, apiError(request, 409, ErrorCode.IDEMPOTENCY_CONFLICT, 'Escalation is already in a terminal stage'));
+    return withCors(
+      request,
+      apiError(
+        request,
+        409,
+        ErrorCode.IDEMPOTENCY_CONFLICT,
+        'Escalation is already in a terminal stage',
+      ),
+    );
   }
 
   // Record additional stakeholders notified at this stage

@@ -16,8 +16,12 @@ const kvData = new Map<string, string>();
 vi.mock('@/lib/kv', () => ({
   kvStore: {
     get: vi.fn(async (key: string) => kvData.get(key) ?? null),
-    set: vi.fn(async (key: string, value: string) => { kvData.set(key, value); }),
-    del: vi.fn(async (key: string) => { kvData.delete(key); }),
+    set: vi.fn(async (key: string, value: string) => {
+      kvData.set(key, value);
+    }),
+    del: vi.fn(async (key: string) => {
+      kvData.delete(key);
+    }),
   },
 }));
 
@@ -29,7 +33,17 @@ vi.mock('@/lib/api/auth', () => ({
     if (key === 'valid-internal-key') return { error: null, apiKey: key };
     const { NextResponse } = await import('next/server');
     return {
-      error: NextResponse.json({ error: { status: 401, code: 'UNAUTHORIZED', message: 'Invalid API key', correlationId: 'test' } }, { status: 401 }),
+      error: NextResponse.json(
+        {
+          error: {
+            status: 401,
+            code: 'UNAUTHORIZED',
+            message: 'Invalid API key',
+            correlationId: 'test',
+          },
+        },
+        { status: 401 },
+      ),
     };
   }),
 }));

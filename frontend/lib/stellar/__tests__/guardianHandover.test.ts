@@ -12,7 +12,11 @@ vi.mock('@stellar/stellar-sdk', () => ({
       sendTransaction: vi.fn().mockResolvedValue({ hash: 'mock-hash-abc' }),
     })),
     Api: { isSimulationSuccess: vi.fn().mockReturnValue(true) },
-    assembleTransaction: vi.fn().mockReturnValue({ build: vi.fn().mockReturnValue({ toXDR: vi.fn().mockReturnValue('xdr') }) }),
+    assembleTransaction: vi
+      .fn()
+      .mockReturnValue({
+        build: vi.fn().mockReturnValue({ toXDR: vi.fn().mockReturnValue('xdr') }),
+      }),
   },
   TransactionBuilder: vi.fn(() => ({
     addOperation: vi.fn().mockReturnThis(),
