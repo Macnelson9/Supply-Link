@@ -2,6 +2,12 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { getProductById, getEventsByProductId } from '@/lib/mock/products';
+import {
+  getAttestationsByProductId,
+  getBatchesByProductId,
+  getAllActiveAuditors,
+  MOCK_AUDITORS,
+} from '@/lib/mock/auditors';
 import ProductQRCode from '@/components/products/ProductQRCode';
 import ProductActions from '@/components/products/ProductActions';
 import { AuthorizedActorsPanel } from '@/components/products/AuthorizedActorsPanel';
@@ -11,6 +17,8 @@ import { DownloadCertificateButton } from '@/components/products/DownloadCertifi
 import { LazyEventMap } from '@/components/lazy/LazyEventMap';
 import { SustainabilityBadge } from '@/components/products/SustainabilityBadge';
 import { CertificationsPanel } from '@/components/products/CertificationBadge';
+import { AuditorAttestationsPanel } from '@/components/products/AuditorAttestationsPanel';
+import { BatchRecallBanner } from '@/components/products/BatchRecallBanner';
 import { getCategoryLabel, getSubcategoryLabel } from '@/lib/taxonomy';
 import { AnchorDocumentForm } from '@/components/products/AnchorDocumentForm';
 import { DocumentAnchorsPanel } from '@/components/products/DocumentAnchorsPanel';
@@ -26,6 +34,14 @@ export default function ProductDetailPage({ params }: Props) {
   const events = getEventsByProductId(p.id);
   const registeredAt = new Date(p.timestamp).toLocaleString();
 
+  // Auditor attestations
+  const attestations = getAttestationsByProductId(p.id);
+  const auditors = MOCK_AUDITORS;
+
+  // Batch recall status
+  const allBatches = getBatchesByProductId(p.id);
+  const recalledBatches = allBatches.filter((b) => b.recalled);
+
   return (
     <main className="p-8 max-w-3xl mx-auto">
       <Link
@@ -34,6 +50,13 @@ export default function ProductDetailPage({ params }: Props) {
       >
         ← Back to Products
       </Link>
+
+      {/* Batch recall banner — shown above everything else if applicable */}
+      {recalledBatches.length > 0 && (
+        <div className="mb-6">
+          <BatchRecallBanner recalledBatches={recalledBatches} />
+        </div>
+      )}
 
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-6 mb-8">
         <div>
@@ -97,6 +120,18 @@ export default function ProductDetailPage({ params }: Props) {
             </dd>
           </div>
         </dl>
+      </section>
+
+      {/* Auditor Attestations */}
+      <section className="border border-[var(--card-border)] bg-[var(--card)] rounded-xl p-6 mb-6">
+        <h2 className="text-base font-semibold mb-4 text-[var(--foreground)]">
+          Auditor Attestations
+        </h2>
+        <AuditorAttestationsPanel
+          productId={p.id}
+          attestations={attestations}
+          auditors={auditors}
+        />
       </section>
 
       {/* Authorized Actors */}
