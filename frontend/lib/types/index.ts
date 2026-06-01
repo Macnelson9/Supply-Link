@@ -124,6 +124,22 @@ export interface Product {
   pending?: boolean;
   hazardous?: boolean;
   hazardClassification?: string;
+  /** Whether this product has been recalled (#393) */
+  recalled?: boolean;
+  /** Reason provided when the product was recalled (#393) */
+  recallReason?: string;
+  /** Ledger timestamp when the product was recalled; 0 if never recalled (#393) */
+  recallTimestamp?: number;
+  /** Schema version of this record (#392) */
+  schemaVersion?: number;
+  /** Off-chain image URL stored in product metadata (#112) */
+  imageUrl?: string;
+  /** Taxonomy category ID (#425) */
+  category?: string;
+  /** Taxonomy subcategory ID (#425) */
+  subcategory?: string;
+  /** On-chain certifications attached to this product (#428) */
+  certifications?: Certification[];
 }
 
 export interface Batch {

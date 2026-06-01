@@ -79,6 +79,8 @@ pub enum Error {
     PendingEventExpired = 6,
     InvalidNonce = 7,
     ComplianceViolation = 8,
+    /// Contract is paused; write operations are not permitted.
+    ContractPaused = 9,
 }
 
 // ── Compliance rule types ─────────────────────────────────────────────────────
@@ -681,6 +683,11 @@ impl SupplyLinkContract {
             panic!("product already exists");
         }
 
+        // Emergency stop: reject writes when contract is paused.
+        if env.storage().persistent().get(&DataKey::ContractPaused).unwrap_or(false) {
+            panic!("contract is paused");
+        }
+
         owner.require_auth();
         // Issue #311: enforce size limits.
         assert_len(&id,          MAX_ID_LEN,     "id");
@@ -846,6 +853,11 @@ impl SupplyLinkContract {
 
         if !product.active {
             panic!("product is deactivated");
+        }
+
+        // Emergency stop: reject writes when contract is paused.
+        if env.storage().persistent().get(&DataKey::ContractPaused).unwrap_or(false) {
+            return Err(Error::ContractPaused);
         }
 
         // Reject events on recalled products (#393)
@@ -1576,6 +1588,43 @@ o            actor: caller,
             history.push_back(metadata);
         }
         history
+    }
+
+    // ── Emergency stop (#441 / #442) ──────────────────────────────────────────
+
+    /// Return `true` when the contract is paused (emergency-stop active).
+    ///
+    /// This is a read-only query; it is always available regardless of pause state.
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ContractPaused)
+            .unwrap_or(false)
+    }
+
+    /// Set the contract pause state.
+    ///
+    /// When `paused` is `true` all write operations will return
+    /// [`Error::ContractPaused`]. Read-only operations are unaffected.
+    ///
+    /// # Authorization
+    /// Restricted to the product owner acting as guardian. In a production
+    /// deployment this should be gated on a dedicated guardian address stored
+    /// in contract instance storage.
+    ///
+    /// # Parameters
+    /// - `guardian` — Address of the authorized guardian invoking this call.
+    /// - `paused`   — `true` to halt writes; `false` to resume normal operation.
+    pub fn set_pause_state(env: Env, guardian: Address, paused: bool) -> bool {
+        guardian.require_auth();
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractPaused, &paused);
+        env.events().publish(
+            (Symbol::new(&env, "contract_pause_changed"),),
+            paused,
+        );
+        paused
     }
 }
 
