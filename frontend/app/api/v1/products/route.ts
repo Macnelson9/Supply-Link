@@ -103,6 +103,17 @@ async function registerProduct(
   // TODO: Persist to database instead of mock
   MOCK_PRODUCTS.push(newProduct);
 
+  // Notify webhooks of the new product registration
+  try {
+    const { notifyWebhooksOfProductEvent } = await import('@/lib/webhooks/processor');
+    await notifyWebhooksOfProductEvent('product_registered', newProduct.id, {
+      product: newProduct,
+    });
+  } catch (err) {
+    console.error('Failed to notify webhooks of product registration:', err);
+    // Don't fail the request if webhook notification fails
+  }
+
   return withCors(req, withCorrelationId(req, NextResponse.json(newProduct, { status: 201 })));
 }
 

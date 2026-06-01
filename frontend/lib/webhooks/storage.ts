@@ -1,12 +1,12 @@
-import * as fs from "fs/promises";
-import * as path from "path";
-import { randomBytes } from "crypto";
-import type { Webhook, WebhookDeliveryAttempt } from "./types";
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import { randomBytes } from 'crypto';
+import type { Webhook, WebhookDeliveryAttempt } from './types';
 
 // Store webhooks in a JSON file in the project (consider using a real DB in production)
-const WEBHOOKS_DIR = path.join(process.cwd(), ".kiro", "webhooks");
-const WEBHOOKS_FILE = path.join(WEBHOOKS_DIR, "webhooks.json");
-const DELIVERY_ATTEMPTS_FILE = path.join(WEBHOOKS_DIR, "delivery-attempts.json");
+const WEBHOOKS_DIR = path.join(process.cwd(), '.kiro', 'webhooks');
+const WEBHOOKS_FILE = path.join(WEBHOOKS_DIR, 'webhooks.json');
+const DELIVERY_ATTEMPTS_FILE = path.join(WEBHOOKS_DIR, 'delivery-attempts.json');
 
 /**
  * Ensure the webhooks directory exists
@@ -25,7 +25,7 @@ async function ensureDir(): Promise<void> {
 export async function getWebhooks(): Promise<Webhook[]> {
   await ensureDir();
   try {
-    const data = await fs.readFile(WEBHOOKS_FILE, "utf-8");
+    const data = await fs.readFile(WEBHOOKS_FILE, 'utf-8');
     return JSON.parse(data) as Webhook[];
   } catch {
     // File doesn't exist yet
@@ -46,8 +46,8 @@ export async function getWebhookById(id: string): Promise<Webhook | null> {
  */
 export async function createWebhook(url: string, providedSecret?: string): Promise<Webhook> {
   await ensureDir();
-  const id = randomBytes(16).toString("hex");
-  const secret = providedSecret || randomBytes(32).toString("hex");
+  const id = randomBytes(16).toString('hex');
+  const secret = providedSecret || randomBytes(32).toString('hex');
   const now = Date.now();
 
   const webhook: Webhook = {
@@ -70,7 +70,10 @@ export async function createWebhook(url: string, providedSecret?: string): Promi
 /**
  * Update webhook (e.g., toggle active status)
  */
-export async function updateWebhook(id: string, updates: Partial<Webhook>): Promise<Webhook | null> {
+export async function updateWebhook(
+  id: string,
+  updates: Partial<Webhook>,
+): Promise<Webhook | null> {
   await ensureDir();
   const webhooks = await getWebhooks();
   const index = webhooks.findIndex((w) => w.id === id);
@@ -102,6 +105,16 @@ export async function deleteWebhook(id: string): Promise<boolean> {
   if (filtered.length === webhooks.length) return false; // Not found
 
   await fs.writeFile(WEBHOOKS_FILE, JSON.stringify(filtered, null, 2));
+
+  // Also delete associated subscriptions
+  try {
+    const { deleteSubscriptionsByWebhookId } = await import('./subscriptions');
+    await deleteSubscriptionsByWebhookId(id);
+  } catch (err) {
+    console.error('Failed to delete subscriptions for webhook:', err);
+    // Don't fail the webhook deletion if subscription cleanup fails
+  }
+
   return true;
 }
 
@@ -121,7 +134,7 @@ export async function recordDeliveryAttempt(attempt: WebhookDeliveryAttempt): Pr
   let attempts: WebhookDeliveryAttempt[] = [];
 
   try {
-    const data = await fs.readFile(DELIVERY_ATTEMPTS_FILE, "utf-8");
+    const data = await fs.readFile(DELIVERY_ATTEMPTS_FILE, 'utf-8');
     attempts = JSON.parse(data) as WebhookDeliveryAttempt[];
   } catch {
     // File doesn't exist yet
@@ -137,7 +150,7 @@ export async function recordDeliveryAttempt(attempt: WebhookDeliveryAttempt): Pr
 export async function updateWebhookDelivery(
   webhookId: string,
   status: number,
-  success: boolean
+  success: boolean,
 ): Promise<void> {
   const webhook = await getWebhookById(webhookId);
   if (!webhook) return;

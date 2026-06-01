@@ -1,6 +1,6 @@
-import { createHmac } from "crypto";
-import type { Webhook, WebhookPayload, WebhookDeliveryAttempt } from "./types";
-import { recordDeliveryAttempt, updateWebhookDelivery } from "./storage";
+import { createHmac } from 'crypto';
+import type { Webhook, WebhookPayload, WebhookDeliveryAttempt } from './types';
+import { recordDeliveryAttempt, updateWebhookDelivery } from './storage';
 
 // Maximum number of retry attempts
 const MAX_RETRY_ATTEMPTS = 5;
@@ -16,14 +16,18 @@ const MAX_BACKOFF_MS = 3600000;
  */
 export function generateWebhookSignature(payload: WebhookPayload, secret: string): string {
   const payloadString = JSON.stringify(payload);
-  const signature = createHmac("sha256", secret).update(payloadString).digest("hex");
+  const signature = createHmac('sha256', secret).update(payloadString).digest('hex');
   return signature;
 }
 
 /**
  * Verify webhook signature (for testing/validation)
  */
-export function verifyWebhookSignature(payload: WebhookPayload, signature: string, secret: string): boolean {
+export function verifyWebhookSignature(
+  payload: WebhookPayload,
+  signature: string,
+  secret: string,
+): boolean {
   const expectedSignature = generateWebhookSignature(payload, secret);
   // Use timing-safe comparison to prevent timing attacks
   return compareStrings(signature, expectedSignature);
@@ -43,8 +47,11 @@ function compareStrings(a: string, b: string): boolean {
 
 /**
  * Calculate exponential backoff with jitter
+ * Allows custom max retries through the retryPolicy parameter
  */
-export function calculateBackoffDelay(attemptNumber: number): number {
+export function calculateBackoffDelay(attemptNumber: number, maxRetries?: number): number {
+  const configuredMaxRetries = maxRetries ?? MAX_RETRY_ATTEMPTS;
+
   // Exponential backoff: 1s, 2s, 4s, 8s, 16s, then cap at 1 hour
   const exponentialDelay = INITIAL_BACKOFF_MS * Math.pow(2, attemptNumber - 1);
   const cappedDelay = Math.min(exponentialDelay, MAX_BACKOFF_MS);
@@ -68,18 +75,20 @@ export interface DeliveryResult {
 export async function sendWebhook(
   webhook: Webhook,
   payload: WebhookPayload,
-  attemptNumber: number = 1
+  attemptNumber: number = 1,
+  subscriptionId?: string,
+  maxRetries?: number,
 ): Promise<DeliveryResult> {
   try {
     const signature = generateWebhookSignature(payload, webhook.secret);
 
     const response = await fetch(webhook.url, {
-      method: "POST",
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
-        "X-Webhook-Signature": signature,
-        "X-Webhook-Timestamp": String(payload.timestamp),
-        "X-Webhook-ID": payload.id,
+        'Content-Type': 'application/json',
+        'X-Webhook-Signature': signature,
+        'X-Webhook-Timestamp': String(payload.timestamp),
+        'X-Webhook-ID': payload.id,
       },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(10000), // 10 second timeout
@@ -89,19 +98,21 @@ export async function sendWebhook(
     let nextRetryIn: number | undefined;
 
     // Record the delivery attempt
+    const configuredMaxRetries = maxRetries ?? MAX_RETRY_ATTEMPTS;
     const deliveryAttempt: WebhookDeliveryAttempt = {
       webhookId: webhook.id,
+      subscriptionId,
       payloadId: payload.id,
-      status: success ? "success" : "failed",
+      status: success ? 'success' : 'failed',
       statusCode: response.status,
       attemptNumber,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
 
-    if (!success && attemptNumber < MAX_RETRY_ATTEMPTS) {
-      nextRetryIn = calculateBackoffDelay(attemptNumber);
-      deliveryAttempt.status = "pending";
+    if (!success && attemptNumber < (maxRetries ?? MAX_RETRY_ATTEMPTS)) {
+      nextRetryIn = calculateBackoffDelay(attemptNumber, maxRetries);
+      deliveryAttempt.status = 'pending';
       deliveryAttempt.nextRetryAt = Date.now() + nextRetryIn;
     }
 
@@ -112,29 +123,31 @@ export async function sendWebhook(
       return { success: true, statusCode: response.status };
     }
 
-    const errorText = await response.text().catch(() => "");
+    const errorText = await response.text().catch(() => '');
     return {
       success: false,
       statusCode: response.status,
       errorMessage: errorText || `HTTP ${response.status}`,
-      nextRetryIn: attemptNumber < MAX_RETRY_ATTEMPTS ? nextRetryIn : undefined,
+      nextRetryIn: attemptNumber < (maxRetries ?? MAX_RETRY_ATTEMPTS) ? nextRetryIn : undefined,
     };
   } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : "Unknown error";
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+    const configuredMaxRetries = maxRetries ?? MAX_RETRY_ATTEMPTS;
 
     // Record failed attempt
     const deliveryAttempt: WebhookDeliveryAttempt = {
       webhookId: webhook.id,
+      subscriptionId,
       payloadId: payload.id,
-      status: attemptNumber < MAX_RETRY_ATTEMPTS ? "pending" : "failed",
+      status: attemptNumber < configuredMaxRetries ? 'pending' : 'failed',
       errorMessage,
       attemptNumber,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
 
-    if (attemptNumber < MAX_RETRY_ATTEMPTS) {
-      const nextRetryIn = calculateBackoffDelay(attemptNumber);
+    if (attemptNumber < configuredMaxRetries) {
+      const nextRetryIn = calculateBackoffDelay(attemptNumber, maxRetries);
       deliveryAttempt.nextRetryAt = Date.now() + nextRetryIn;
     }
 
@@ -144,7 +157,10 @@ export async function sendWebhook(
     return {
       success: false,
       errorMessage,
-      nextRetryIn: attemptNumber < MAX_RETRY_ATTEMPTS ? calculateBackoffDelay(attemptNumber) : undefined,
+      nextRetryIn:
+        attemptNumber < configuredMaxRetries
+          ? calculateBackoffDelay(attemptNumber, maxRetries)
+          : undefined,
     };
   }
 }
@@ -154,7 +170,7 @@ export async function sendWebhook(
  */
 export async function broadcastWebhook(
   webhooks: Webhook[],
-  payload: WebhookPayload
+  payload: WebhookPayload,
 ): Promise<{
   successful: number;
   failed: number;
@@ -174,7 +190,7 @@ export async function broadcastWebhook(
         success: result.success,
         error: result.errorMessage,
       };
-    })
+    }),
   );
 
   const successful = results.filter((r) => r.success).length;
