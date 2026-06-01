@@ -206,9 +206,7 @@ export function AttestationsPanel({ productId, compact = false }: AttestationsPa
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(
-        `/api/v1/attestations?productId=${encodeURIComponent(productId)}`,
-      );
+      const res = await fetch(`/api/v1/attestations?productId=${encodeURIComponent(productId)}`);
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data?.error?.message ?? `HTTP ${res.status}`);
@@ -304,9 +302,7 @@ export function AttestationsPanel({ productId, compact = false }: AttestationsPa
       )}
 
       {!loading && !error && attestations.length === 0 && (
-        <p className="text-sm text-[var(--muted)]">
-          No attestations registered for this product.
-        </p>
+        <p className="text-sm text-[var(--muted)]">No attestations registered for this product.</p>
       )}
 
       {!loading && !error && attestations.length > 0 && (
@@ -320,10 +316,7 @@ export function AttestationsPanel({ productId, compact = false }: AttestationsPa
           {inactive.length > 0 && (
             <details className="group">
               <summary className="cursor-pointer text-xs text-[var(--muted)] hover:text-[var(--foreground)] transition-colors list-none flex items-center gap-1 py-1">
-                <ChevronDown
-                  size={12}
-                  className="group-open:rotate-180 transition-transform"
-                />
+                <ChevronDown size={12} className="group-open:rotate-180 transition-transform" />
                 {inactive.length} revoked / expired
               </summary>
               <div className="mt-2 space-y-2">

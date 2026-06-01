@@ -41,26 +41,34 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return withCors(request, apiError(request, 400, ErrorCode.INVALID_JSON, 'Invalid JSON'));
   }
 
-  const {
-    productId,
-    productName,
-    issuerAddress,
-    issuerAuthority,
-    certType,
-    scope,
-    validityDays,
-  } = body as Record<string, unknown>;
+  const { productId, productName, issuerAddress, issuerAuthority, certType, scope, validityDays } =
+    body as Record<string, unknown>;
 
   if (!productId || typeof productId !== 'string')
-    return withCors(request, apiError(request, 400, ErrorCode.MISSING_FIELDS, 'productId is required'));
+    return withCors(
+      request,
+      apiError(request, 400, ErrorCode.MISSING_FIELDS, 'productId is required'),
+    );
   if (!productName || typeof productName !== 'string')
-    return withCors(request, apiError(request, 400, ErrorCode.MISSING_FIELDS, 'productName is required'));
+    return withCors(
+      request,
+      apiError(request, 400, ErrorCode.MISSING_FIELDS, 'productName is required'),
+    );
   if (!issuerAddress || typeof issuerAddress !== 'string')
-    return withCors(request, apiError(request, 400, ErrorCode.MISSING_FIELDS, 'issuerAddress is required'));
+    return withCors(
+      request,
+      apiError(request, 400, ErrorCode.MISSING_FIELDS, 'issuerAddress is required'),
+    );
   if (!issuerAuthority || typeof issuerAuthority !== 'string')
-    return withCors(request, apiError(request, 400, ErrorCode.MISSING_FIELDS, 'issuerAuthority is required'));
+    return withCors(
+      request,
+      apiError(request, 400, ErrorCode.MISSING_FIELDS, 'issuerAuthority is required'),
+    );
   if (!certType || typeof certType !== 'string')
-    return withCors(request, apiError(request, 400, ErrorCode.MISSING_FIELDS, 'certType is required'));
+    return withCors(
+      request,
+      apiError(request, 400, ErrorCode.MISSING_FIELDS, 'certType is required'),
+    );
   if (!scope || typeof scope !== 'string')
     return withCors(request, apiError(request, 400, ErrorCode.MISSING_FIELDS, 'scope is required'));
 
@@ -98,9 +106,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const productId = searchParams.get('productId') ?? undefined;
   const issuer = searchParams.get('issuer') ?? undefined;
 
-  const certs = issuer
-    ? listByIssuer(issuer)
-    : listCertifications(productId);
+  const certs = issuer ? listByIssuer(issuer) : listCertifications(productId);
 
   // Resolve effective status for each cert
   const enriched = certs.map((c) => ({ ...c, effectiveStatus: effectiveStatus(c) }));

@@ -16,8 +16,12 @@ const kvData = new Map<string, string>();
 vi.mock('@/lib/kv', () => ({
   kvStore: {
     get: vi.fn(async (key: string) => kvData.get(key) ?? null),
-    set: vi.fn(async (key: string, value: string) => { kvData.set(key, value); }),
-    del: vi.fn(async (key: string) => { kvData.delete(key); }),
+    set: vi.fn(async (key: string, value: string) => {
+      kvData.set(key, value);
+    }),
+    del: vi.fn(async (key: string) => {
+      kvData.delete(key);
+    }),
   },
 }));
 
@@ -30,7 +34,14 @@ vi.mock('@/lib/api/apiKeyAuth', () => ({
     const { NextResponse } = await import('next/server');
     return {
       error: NextResponse.json(
-        { error: { status: 401, code: 'UNAUTHORIZED', message: 'Invalid API key', correlationId: 'test' } },
+        {
+          error: {
+            status: 401,
+            code: 'UNAUTHORIZED',
+            message: 'Invalid API key',
+            correlationId: 'test',
+          },
+        },
         { status: 401 },
       ),
     };
@@ -142,12 +153,9 @@ describe('POST /api/v1/attestations', () => {
   });
 
   it('returns 401 without a valid API key', async () => {
-    const req = makeRequest(
-      'POST',
-      'http://localhost/api/v1/attestations',
-      VALID_ATTESTATION,
-      { 'x-api-key': 'wrong-key' },
-    );
+    const req = makeRequest('POST', 'http://localhost/api/v1/attestations', VALID_ATTESTATION, {
+      'x-api-key': 'wrong-key',
+    });
     const res = await POST(req);
     expect(res.status).toBe(401);
   });
@@ -167,10 +175,7 @@ describe('GET /api/v1/attestations', () => {
     const postReq = makeRequest('POST', 'http://localhost/api/v1/attestations', VALID_ATTESTATION);
     await POST(postReq);
 
-    const req = makeRequest(
-      'GET',
-      'http://localhost/api/v1/attestations?productId=prod-001',
-    );
+    const req = makeRequest('GET', 'http://localhost/api/v1/attestations?productId=prod-001');
     const res = await GET(req);
     expect(res.status).toBe(200);
 
@@ -291,17 +296,17 @@ describe('DELETE /api/v1/attestations/[attestationId]', () => {
       undefined,
       { 'x-issuer-address': 'GAUDITOR123' },
     );
-    const res = await deleteById(req, { params: Promise.resolve({ attestationId: 'att_unknown' }) });
+    const res = await deleteById(req, {
+      params: Promise.resolve({ attestationId: 'att_unknown' }),
+    });
     expect(res.status).toBe(404);
   });
 
   it('returns 401 without a valid API key', async () => {
-    const req = makeRequest(
-      'DELETE',
-      'http://localhost/api/v1/attestations/att_test',
-      undefined,
-      { 'x-api-key': 'wrong-key', 'x-issuer-address': 'GAUDITOR123' },
-    );
+    const req = makeRequest('DELETE', 'http://localhost/api/v1/attestations/att_test', undefined, {
+      'x-api-key': 'wrong-key',
+      'x-issuer-address': 'GAUDITOR123',
+    });
     const res = await deleteById(req, { params: Promise.resolve({ attestationId: 'att_test' }) });
     expect(res.status).toBe(401);
   });

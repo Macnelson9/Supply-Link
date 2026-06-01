@@ -1,15 +1,17 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { Package, Activity, CheckCircle, Clock } from "lucide-react";
-import { useDashboardData, type DateRange } from "@/lib/hooks/useDashboardData";
-import { LazyDashboardCharts } from "@/components/lazy/LazyDashboardCharts";
-import { LazyAdvancedCharts } from "@/components/lazy/LazyAdvancedCharts";
-import { DateRangeFilter } from "@/components/dashboard/DateRangeFilter";
-import { ExportButton } from "@/components/dashboard/ExportButton";
-import { ChartSkeleton } from "@/components/skeletons/LoadingSkeletons";
-import type { EventType } from "@/lib/types";
-import { EVENT_TYPE_CONFIG } from "@/lib/eventTypeConfig";
+import { useState, useEffect } from 'react';
+import { Package, Activity, CheckCircle, Clock } from 'lucide-react';
+import { useDashboardData, type DateRange } from '@/lib/hooks/useDashboardData';
+import { useOnboardingProgress } from '@/lib/hooks/useOnboardingProgress';
+import { LazyDashboardCharts } from '@/components/lazy/LazyDashboardCharts';
+import { LazyAdvancedCharts } from '@/components/lazy/LazyAdvancedCharts';
+import { DateRangeFilter } from '@/components/dashboard/DateRangeFilter';
+import { ExportButton } from '@/components/dashboard/ExportButton';
+import { ChartSkeleton } from '@/components/skeletons/LoadingSkeletons';
+import { OnboardingChecklist } from '@/components/onboarding/OnboardingChecklist';
+import type { EventType } from '@/lib/types';
+import { EVENT_TYPE_CONFIG } from '@/lib/eventTypeConfig';
 
 const DEFAULT_RANGE: DateRange = {
   from: Date.now() - 30 * 86_400_000,
@@ -40,6 +42,7 @@ function StatCard({
 
 export default function DashboardPage() {
   const [range, setRange] = useState<DateRange>(DEFAULT_RANGE);
+  useOnboardingProgress();
 
   const {
     stats,
@@ -54,6 +57,9 @@ export default function DashboardPage() {
 
   return (
     <main className="p-4 md:p-6 space-y-8 max-w-7xl mx-auto">
+      {/* Onboarding Checklist */}
+      <OnboardingChecklist />
+
       {/* Header row */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <h1 className="text-2xl font-bold text-[var(--foreground)]">Dashboard</h1>
@@ -117,14 +123,18 @@ export default function DashboardPage() {
                         const cfg = EVENT_TYPE_CONFIG[e.eventType as EventType];
                         const Icon = cfg?.icon;
                         return (
-                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${cfg?.badgeClass ?? "bg-gray-100 text-gray-800"}`}>
+                          <span
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${cfg?.badgeClass ?? 'bg-gray-100 text-gray-800'}`}
+                          >
                             {Icon && <Icon size={11} />}
                             {cfg?.label ?? e.eventType}
                           </span>
                         );
                       })()}
                     </td>
-                    <td className="px-5 py-3 text-[var(--foreground)] hidden sm:table-cell">{e.location}</td>
+                    <td className="px-5 py-3 text-[var(--foreground)] hidden sm:table-cell">
+                      {e.location}
+                    </td>
                     <td className="px-5 py-3 text-[var(--muted)]">
                       {new Date(e.timestamp).toLocaleString()}
                     </td>

@@ -72,9 +72,9 @@ export function buildMLExport(
   const records: MLExportRecord[] = [];
 
   for (const product of products) {
-    const events = (eventsMap.get(product.id) ?? []).slice().sort(
-      (a, b) => a.timestamp - b.timestamp,
-    );
+    const events = (eventsMap.get(product.id) ?? [])
+      .slice()
+      .sort((a, b) => a.timestamp - b.timestamp);
 
     const seenActors = new Set<string>();
 
@@ -102,8 +102,7 @@ export function buildMLExport(
         event_timestamp: ev.timestamp,
         event_sequence: i,
 
-        seconds_since_prev_event:
-          prev !== null ? (ev.timestamp - prev.timestamp) / 1000 : null,
+        seconds_since_prev_event: prev !== null ? (ev.timestamp - prev.timestamp) / 1000 : null,
         total_events_for_product: events.length,
         unique_actors_so_far: seenActors.size,
         actor_is_owner: ev.actor === product.owner,

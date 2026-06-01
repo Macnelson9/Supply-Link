@@ -31,7 +31,11 @@ export function GuardianHandoverPanel({ productId, walletAddress, proposal, onUp
     setLoading(true);
     setError(null);
     try {
-      await guardianHandoverClient.proposeHandover(productId, proposedGuardian.trim(), walletAddress);
+      await guardianHandoverClient.proposeHandover(
+        productId,
+        proposedGuardian.trim(),
+        walletAddress,
+      );
       setProposedGuardian('');
       onUpdate();
     } catch (e) {

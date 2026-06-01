@@ -69,9 +69,7 @@ export function issueCertification(params: IssueCertParams): RegulatorCertificat
   const id = generateId();
   const now = Date.now();
   const expiresAt =
-    params.validityDays && params.validityDays > 0
-      ? now + params.validityDays * 86_400_000
-      : 0;
+    params.validityDays && params.validityDays > 0 ? now + params.validityDays * 86_400_000 : 0;
 
   const cert: RegulatorCertification = {
     id,
@@ -84,9 +82,7 @@ export function issueCertification(params: IssueCertParams): RegulatorCertificat
     status: 'active',
     issuedAt: now,
     expiresAt,
-    auditTrail: [
-      { action: 'issued', actor: params.issuerAddress, timestamp: now },
-    ],
+    auditTrail: [{ action: 'issued', actor: params.issuerAddress, timestamp: now }],
     txHash: simulateTxHash(),
   };
 
@@ -118,9 +114,7 @@ export function listCertifications(productId?: string): RegulatorCertification[]
 }
 
 export function listByIssuer(issuerAddress: string): RegulatorCertification[] {
-  return Array.from(certStore.values()).filter(
-    (c) => c.issuerAddress === issuerAddress,
-  );
+  return Array.from(certStore.values()).filter((c) => c.issuerAddress === issuerAddress);
 }
 
 /** Resolve effective status (auto-expire based on current time). */

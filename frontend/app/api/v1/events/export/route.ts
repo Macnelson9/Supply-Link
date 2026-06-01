@@ -81,8 +81,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const payload = buildInterchangePayload(product, allEvents, { offset, limit });
 
-  const contentType =
-    format === 'jsonld' ? 'application/ld+json' : 'application/json';
+  const contentType = format === 'jsonld' ? 'application/ld+json' : 'application/json';
 
   const inner = NextResponse.json(payload, {
     status: 200,

@@ -10,11 +10,7 @@
 
 import { describe, it, expect } from 'vitest';
 import type { Product, TrackingEvent } from '@/lib/types';
-import {
-  buildInterchangePayload,
-  serializeEvent,
-  serializeProduct,
-} from '../eventExporter';
+import { buildInterchangePayload, serializeEvent, serializeProduct } from '../eventExporter';
 import { INTERCHANGE_SCHEMA_VERSION, INTERCHANGE_CONTEXT } from '../eventSchema';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────

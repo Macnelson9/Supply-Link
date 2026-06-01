@@ -109,10 +109,7 @@ export const guardianHandoverClient = {
    * Accept a pending guardian handover proposal.
    * Must be called by the proposed new guardian.
    */
-  async acceptHandover(
-    productId: string,
-    callerAddress: string,
-  ): Promise<string> {
+  async acceptHandover(productId: string, callerAddress: string): Promise<string> {
     return withContractWriteRetry(() =>
       buildSignAndSubmit('accept_guardian_handover', [productId], callerAddress),
     )
@@ -143,10 +140,7 @@ export const guardianHandoverClient = {
    * Cancel a pending guardian handover proposal.
    * Can be called by the current guardian.
    */
-  async cancelHandover(
-    productId: string,
-    callerAddress: string,
-  ): Promise<string> {
+  async cancelHandover(productId: string, callerAddress: string): Promise<string> {
     return withContractWriteRetry(() =>
       buildSignAndSubmit('cancel_guardian_handover', [productId], callerAddress),
     )

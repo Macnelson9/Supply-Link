@@ -28,8 +28,15 @@ export async function GET(
   const start = Date.now();
   const { productId } = await params;
 
-  const limited = applyRateLimit(request, 'GET /api/v1/provenance/proof', RATE_LIMIT_PRESETS.publicRead);
-  if (limited) { recordRequest('GET /api/v1/provenance/proof', 429, Date.now() - start); return limited; }
+  const limited = applyRateLimit(
+    request,
+    'GET /api/v1/provenance/proof',
+    RATE_LIMIT_PRESETS.publicRead,
+  );
+  if (limited) {
+    recordRequest('GET /api/v1/provenance/proof', 429, Date.now() - start);
+    return limited;
+  }
 
   try {
     const events = await getTrackingEvents(productId);
@@ -55,7 +62,10 @@ export async function GET(
   } catch (err) {
     console.error('[provenance proof GET]', err);
     recordRequest('GET /api/v1/provenance/proof', 500, Date.now() - start);
-    return withCors(request, apiError(request, 500, ErrorCode.INTERNAL_ERROR, 'Failed to generate proof'));
+    return withCors(
+      request,
+      apiError(request, 500, ErrorCode.INTERNAL_ERROR, 'Failed to generate proof'),
+    );
   }
 }
 
@@ -66,8 +76,15 @@ export async function POST(
   const start = Date.now();
   const { productId } = await params;
 
-  const limited = applyRateLimit(request, 'POST /api/v1/provenance/proof', RATE_LIMIT_PRESETS.default);
-  if (limited) { recordRequest('POST /api/v1/provenance/proof', 429, Date.now() - start); return limited; }
+  const limited = applyRateLimit(
+    request,
+    'POST /api/v1/provenance/proof',
+    RATE_LIMIT_PRESETS.default,
+  );
+  if (limited) {
+    recordRequest('POST /api/v1/provenance/proof', 429, Date.now() - start);
+    return limited;
+  }
 
   let body: { encodedProof?: string };
   try {
@@ -77,16 +94,25 @@ export async function POST(
   }
 
   if (!body.encodedProof || typeof body.encodedProof !== 'string') {
-    return withCors(request, apiError(request, 400, ErrorCode.MISSING_FIELDS, 'encodedProof is required'));
+    return withCors(
+      request,
+      apiError(request, 400, ErrorCode.MISSING_FIELDS, 'encodedProof is required'),
+    );
   }
 
   const proof = decodeProof(body.encodedProof);
   if (!proof) {
-    return withCors(request, apiError(request, 400, ErrorCode.INVALID_PAYLOAD, 'Could not decode proof'));
+    return withCors(
+      request,
+      apiError(request, 400, ErrorCode.INVALID_PAYLOAD, 'Could not decode proof'),
+    );
   }
 
   if (proof.productId !== productId) {
-    return withCors(request, apiError(request, 400, ErrorCode.VALIDATION_ERROR, 'Proof productId does not match URL'));
+    return withCors(
+      request,
+      apiError(request, 400, ErrorCode.VALIDATION_ERROR, 'Proof productId does not match URL'),
+    );
   }
 
   try {
@@ -113,6 +139,9 @@ export async function POST(
   } catch (err) {
     console.error('[provenance proof POST]', err);
     recordRequest('POST /api/v1/provenance/proof', 500, Date.now() - start);
-    return withCors(request, apiError(request, 500, ErrorCode.INTERNAL_ERROR, 'Failed to verify proof'));
+    return withCors(
+      request,
+      apiError(request, 500, ErrorCode.INTERNAL_ERROR, 'Failed to verify proof'),
+    );
   }
 }

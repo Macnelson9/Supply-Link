@@ -80,9 +80,7 @@ async function hmacSha256Hex(key: string, data: string): Promise<string> {
 
 /** Canonical string for a single event (deterministic, order-stable). */
 function canonicalEvent(e: TrackingEvent): string {
-  return [e.productId, e.eventType, e.location, e.actor, String(e.timestamp), e.metadata].join(
-    '|',
-  );
+  return [e.productId, e.eventType, e.location, e.actor, String(e.timestamp), e.metadata].join('|');
 }
 
 function getProofSecret(): string {

@@ -121,7 +121,9 @@ describe('GET /api/v1/regulator/certifications', () => {
     const res = await GET(req);
     const body = await res.json();
     expect(res.status).toBe(200);
-    expect(body.certifications.every((c: { productId: string }) => c.productId === 'prod-x')).toBe(true);
+    expect(body.certifications.every((c: { productId: string }) => c.productId === 'prod-x')).toBe(
+      true,
+    );
   });
 
   it('filters by issuer', async () => {
@@ -244,14 +246,11 @@ describe('DELETE /api/v1/regulator/certifications/[id]', () => {
 
     const { DELETE } = await import('../[id]/route');
     const revokeReq = () =>
-      new NextRequest(
-        `http://localhost/api/v1/regulator/certifications/${certification.id}`,
-        {
-          method: 'DELETE',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ actor: 'G1' }),
-        },
-      );
+      new NextRequest(`http://localhost/api/v1/regulator/certifications/${certification.id}`, {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ actor: 'G1' }),
+      });
 
     await DELETE(revokeReq(), { params: Promise.resolve({ id: certification.id }) });
     const res2 = await DELETE(revokeReq(), { params: Promise.resolve({ id: certification.id }) });

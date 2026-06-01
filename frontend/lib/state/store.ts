@@ -6,6 +6,7 @@ import { createWalletSlice } from './walletSlice';
 import { createProductsSlice } from './productsSlice';
 import { createEventsSlice } from './eventsSlice';
 import { createUISlice } from './uiSlice';
+import { createOnboardingSlice } from './onboardingSlice';
 import { SupplyLinkStore } from './types';
 
 export const useStore = create<SupplyLinkStore>()(
@@ -15,12 +16,15 @@ export const useStore = create<SupplyLinkStore>()(
       ...createProductsSlice(...a),
       ...createEventsSlice(...a),
       ...createUISlice(...a),
+      ...createOnboardingSlice(...a),
     }),
     {
       name: 'supply-link-store',
       partialize: (state) => ({
         walletAddress: state.walletAddress,
         notifications: state.notifications,
+        onboardingCompleted: state.onboardingCompleted,
+        onboardingChecklist: state.onboardingChecklist,
       }),
     },
   ),

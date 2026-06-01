@@ -26,7 +26,12 @@ export async function GET(
 
   const stableId = request.nextUrl.searchParams.get('stableId');
   if (!stableId) {
-    return apiError(request, 400, ErrorCode.MISSING_FIELDS, 'Missing required query param: stableId');
+    return apiError(
+      request,
+      400,
+      ErrorCode.MISSING_FIELDS,
+      'Missing required query param: stableId',
+    );
   }
 
   const raw = await kvStore.get(`validation:${stableId}`);
@@ -46,8 +51,5 @@ export async function GET(
   }
 
   const result = JSON.parse(raw) as EventValidationResult;
-  return withCors(
-    request,
-    withCorrelationId(request, NextResponse.json(result, { status: 200 })),
-  );
+  return withCors(request, withCorrelationId(request, NextResponse.json(result, { status: 200 })));
 }

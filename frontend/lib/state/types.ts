@@ -1,5 +1,23 @@
 import type { Product, TrackingEvent, EventType, Notification } from '@/lib/types';
 
+export interface OnboardingChecklistItem {
+  id: string;
+  title: string;
+  description: string;
+  completed: boolean;
+  required: boolean;
+}
+
+export interface OnboardingSlice {
+  onboardingCompleted: boolean;
+  onboardingChecklist: OnboardingChecklistItem[];
+  onboardingProgress: number;
+  setOnboardingCompleted: (completed: boolean) => void;
+  setOnboardingChecklist: (items: OnboardingChecklistItem[]) => void;
+  completeChecklistItem: (itemId: string) => void;
+  resetOnboarding: () => void;
+}
+
 export interface WalletSlice {
   walletAddress: string | null;
   xlmBalance: string | null;
@@ -82,4 +100,4 @@ export interface UISlice {
   setActivePage: (page: string) => void;
 }
 
-export type SupplyLinkStore = WalletSlice & ProductsSlice & EventsSlice & UISlice;
+export type SupplyLinkStore = WalletSlice & ProductsSlice & EventsSlice & UISlice & OnboardingSlice;

@@ -27,8 +27,15 @@ export function OPTIONS(request: NextRequest) {
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const start = Date.now();
 
-  const limited = applyRateLimit(request, 'POST /api/product/recall/escalation', RATE_LIMIT_PRESETS.default);
-  if (limited) { recordRequest('POST /api/product/recall/escalation', 429, Date.now() - start); return limited; }
+  const limited = applyRateLimit(
+    request,
+    'POST /api/product/recall/escalation',
+    RATE_LIMIT_PRESETS.default,
+  );
+  if (limited) {
+    recordRequest('POST /api/product/recall/escalation', 429, Date.now() - start);
+    return limited;
+  }
 
   let body: Record<string, unknown>;
   try {
@@ -37,22 +44,45 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return withCors(request, apiError(request, 400, ErrorCode.INVALID_JSON, 'Invalid JSON'));
   }
 
-  const { productId, productName, reason, priority, initiatedBy, stakeholders } = body as Record<string, unknown>;
+  const { productId, productName, reason, priority, initiatedBy, stakeholders } = body as Record<
+    string,
+    unknown
+  >;
 
   if (!productId || typeof productId !== 'string') {
-    return withCors(request, apiError(request, 400, ErrorCode.MISSING_FIELDS, 'productId is required'));
+    return withCors(
+      request,
+      apiError(request, 400, ErrorCode.MISSING_FIELDS, 'productId is required'),
+    );
   }
   if (!productName || typeof productName !== 'string') {
-    return withCors(request, apiError(request, 400, ErrorCode.MISSING_FIELDS, 'productName is required'));
+    return withCors(
+      request,
+      apiError(request, 400, ErrorCode.MISSING_FIELDS, 'productName is required'),
+    );
   }
   if (!reason || typeof reason !== 'string') {
-    return withCors(request, apiError(request, 400, ErrorCode.MISSING_FIELDS, 'reason is required'));
+    return withCors(
+      request,
+      apiError(request, 400, ErrorCode.MISSING_FIELDS, 'reason is required'),
+    );
   }
   if (!priority || !VALID_PRIORITIES.includes(priority as RecallPriority)) {
-    return withCors(request, apiError(request, 400, ErrorCode.VALIDATION_ERROR, `priority must be one of: ${VALID_PRIORITIES.join(', ')}`));
+    return withCors(
+      request,
+      apiError(
+        request,
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        `priority must be one of: ${VALID_PRIORITIES.join(', ')}`,
+      ),
+    );
   }
   if (!initiatedBy || typeof initiatedBy !== 'string') {
-    return withCors(request, apiError(request, 400, ErrorCode.MISSING_FIELDS, 'initiatedBy is required'));
+    return withCors(
+      request,
+      apiError(request, 400, ErrorCode.MISSING_FIELDS, 'initiatedBy is required'),
+    );
   }
 
   const escalation = createEscalation({
@@ -83,8 +113,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const start = Date.now();
 
-  const limited = applyRateLimit(request, 'GET /api/product/recall/escalation', RATE_LIMIT_PRESETS.default);
-  if (limited) { recordRequest('GET /api/product/recall/escalation', 429, Date.now() - start); return limited; }
+  const limited = applyRateLimit(
+    request,
+    'GET /api/product/recall/escalation',
+    RATE_LIMIT_PRESETS.default,
+  );
+  if (limited) {
+    recordRequest('GET /api/product/recall/escalation', 429, Date.now() - start);
+    return limited;
+  }
 
   const productId = request.nextUrl.searchParams.get('productId') ?? undefined;
   const escalations = listEscalations(productId);

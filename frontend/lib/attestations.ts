@@ -237,8 +237,10 @@ export async function validateAttestation(
 
   const view = toView(record);
 
-  if (view.status === 'revoked') return { valid: false, reason: 'Attestation has been revoked', record: view };
-  if (view.status === 'expired') return { valid: false, reason: 'Attestation has expired', record: view };
+  if (view.status === 'revoked')
+    return { valid: false, reason: 'Attestation has been revoked', record: view };
+  if (view.status === 'expired')
+    return { valid: false, reason: 'Attestation has expired', record: view };
 
   if (expectedReference && record.signedReference !== expectedReference) {
     return { valid: false, reason: 'Signed reference mismatch', record: view };

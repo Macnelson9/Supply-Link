@@ -80,10 +80,7 @@ export async function DELETE(
   const { actor, note } = body as Record<string, unknown>;
 
   if (!actor || typeof actor !== 'string') {
-    return withCors(
-      request,
-      apiError(request, 400, ErrorCode.MISSING_FIELDS, 'actor is required'),
-    );
+    return withCors(request, apiError(request, 400, ErrorCode.MISSING_FIELDS, 'actor is required'));
   }
 
   const revoked = revokeCertification(id, actor, typeof note === 'string' ? note : undefined);

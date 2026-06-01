@@ -39,9 +39,7 @@ describe('claimEventSequence', () => {
   it('throws EventSequenceConflictError when seq is stale', async () => {
     await claimEventSequence('prod-test', 0); // nextSeq is now 1
 
-    await expect(claimEventSequence('prod-test', 0)).rejects.toThrow(
-      EventSequenceConflictError,
-    );
+    await expect(claimEventSequence('prod-test', 0)).rejects.toThrow(EventSequenceConflictError);
   });
 
   it('conflict error contains expected and received seq numbers', async () => {
@@ -59,9 +57,7 @@ describe('claimEventSequence', () => {
   });
 
   it('throws when seq is ahead of current nextSeq', async () => {
-    await expect(claimEventSequence('prod-test', 5)).rejects.toThrow(
-      EventSequenceConflictError,
-    );
+    await expect(claimEventSequence('prod-test', 5)).rejects.toThrow(EventSequenceConflictError);
   });
 });
 
