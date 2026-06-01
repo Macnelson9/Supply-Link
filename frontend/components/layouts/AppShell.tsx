@@ -5,6 +5,7 @@ import { AppNavbar } from './Navbar';
 import { Sidebar } from './Sidebar';
 import { AuthGuard } from './AuthGuard';
 import { SyncStatusBanner } from '@/components/ui/SyncStatusBanner';
+import { ContractPausedBanner } from '@/components/ui/ContractPausedBanner';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -13,6 +14,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <AuthGuard>
       <div className="flex flex-col min-h-screen bg-[var(--background)]">
         <AppNavbar onMenuClick={() => setSidebarOpen(true)} />
+        <ContractPausedBanner />
         <SyncStatusBanner />
         <div className="flex flex-1">
           <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />

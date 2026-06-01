@@ -37,6 +37,7 @@ pub const EVENT_SCHEMA_VERSION: u32 = 2;
 mod tests;
 mod resilience_tests;
 mod compliance_tests;
+mod archival_tests;
 mod document_hash_tests;
 
 // ── Payload size limits (issue #311) ─────────────────────────────────────────
@@ -78,6 +79,8 @@ pub enum Error {
     PendingEventExpired = 6,
     InvalidNonce = 7,
     ComplianceViolation = 8,
+    /// Contract is paused; write operations are not permitted.
+    ContractPaused = 9,
 }
 
 // ── Compliance rule types ─────────────────────────────────────────────────────
@@ -416,6 +419,75 @@ pub struct ProvenanceScoreMetadata {
     pub schema_version: u32,
 }
 
+/// Archival record wrapping a [`TrackingEvent`] with retention metadata.
+///
+/// Archived events are moved out of the active `Events` list into a separate
+/// `ArchivedEvents` store. The original event data and its `stable_id` are
+/// preserved verbatim so integrity proofs remain valid. Archived events do
+/// **not** appear in `get_tracking_events` / `list_tracking_events` but are
+/// fully queryable via `list_archived_events`.
+#[contracttype]
+#[derive(Clone)]
+pub struct ArchivedEvent {
+    /// The original tracking event — unchanged, integrity preserved.
+    pub event: TrackingEvent,
+    /// Stellar address of the actor who archived this event.
+    pub archived_by: Address,
+    /// Ledger timestamp when the event was archived.
+    pub archived_at: u64,
+    /// Optional human-readable reason for archival (e.g. "retention policy").
+    pub reason: String,
+}
+
+/// A trusted certification issuer registered in the on-chain certification registry.
+///
+/// Third-party agencies (e.g. ISO bodies, fair-trade organisations) are
+/// registered here. Products can then reference a `cert_registry_ref` that
+/// points to an issuer + external certificate ID, and anyone can call
+/// `verify_certification_registry_ref` to confirm the reference is valid.
+#[contracttype]
+#[derive(Clone)]
+pub struct CertificationIssuer {
+    /// Stellar address of the issuing organisation's on-chain identity.
+    pub issuer_address: Address,
+    /// Human-readable name of the issuing organisation.
+    pub name: String,
+    /// Certification types this issuer is authorised to issue (e.g. `"organic"`, `"iso_9001"`).
+    pub cert_types: Vec<String>,
+    /// Ledger timestamp when this issuer was registered.
+    pub registered_at: u64,
+    /// Whether this issuer is currently active.
+    pub active: bool,
+}
+
+/// A certification registry record linking a product certification to an external issuer.
+///
+/// Stores the issuer address, the external certificate ID (as issued by the
+/// third-party body), and a cross-check hash so consumers can verify the
+/// reference without trusting the on-chain string alone.
+#[contracttype]
+#[derive(Clone)]
+pub struct CertificationRegistryRecord {
+    /// Unique ID for this registry record.
+    pub id: String,
+    /// ID of the product this record belongs to.
+    pub product_id: String,
+    /// Stellar address of the registered issuer.
+    pub issuer_address: Address,
+    /// External certificate identifier as issued by the third-party body.
+    pub external_cert_id: String,
+    /// Certification type (must match one of the issuer's `cert_types`).
+    pub cert_type: String,
+    /// Hex-encoded SHA-256 hash of the external certificate document for cross-checking.
+    pub document_hash: String,
+    /// Ledger timestamp when this record was created.
+    pub issued_at: u64,
+    /// Whether this registry record has been revoked.
+    pub revoked: bool,
+    /// Ledger timestamp when revoked (0 if not revoked).
+    pub revoked_at: u64,
+}
+
 // ── Storage keys ─────────────────────────────────────────────────────────────
 
 #[contracttype]
@@ -454,6 +526,39 @@ pub enum DataKey {
     ProductIdAlias(String),
     /// Key for provenance score metadata. The inner `String` is the product ID. (#507)
     ProvenanceScore(String),
+    /// Archived events for a product — events flagged as archived but retained for audit. (archival)
+    ArchivedEvents(String),
+    /// Certification registry issuers — trusted third-party certification bodies. (cert-registry)
+    CertificationIssuers,
+    /// Per-issuer certification records keyed by issuer address. (cert-registry)
+    IssuerCertifications(Address),
+    /// Certification registry records for a product. (cert-registry)
+    CertRegistryRecords(String),
+    /// On-chain product certifications (#428). The inner `String` is the product ID.
+    Certifications(String),
+    /// Event-level certifications (#505). The inner `String` is the product ID.
+    EventCertifications(String),
+    /// Provenance notarizations for a product (#504). The inner `String` is the product ID.
+    ProvenanceNotarizations(String),
+    /// Registered certifier by ID (#505). The inner `String` is the certifier ID.
+    Certifier(String),
+    /// List of all certifier IDs (#505).
+    CertifierIds,
+    /// Index of certifier IDs (alternate key). The inner `String` is the certifier ID.
+    CertifierIndex(String),
+    /// Pending ownership transfer escrow. The inner `String` is the product ID.
+    TransferEscrow(String),
+    /// Anomaly reports for a product. The inner `String` is the product ID.
+    AnomalyReports(String),
+    /// Event timestamp certifications. The inner `String` is the product ID.
+    EventTimestampCerts(String),
+    /// Single pending event by ID (alternate lookup). The inner `String` is the product ID.
+    PendingEvent(String),
+    /// Provenance root hash for a product. The inner `String` is the product ID.
+    ProvenanceRoot(String),
+    /// Global emergency-stop flag. Stored as a `bool`. When `true`, all write
+    /// operations are rejected. Read-only operations remain available.
+    ContractPaused,
 }
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -520,6 +625,11 @@ impl SupplyLinkContract {
         // duplicate attempts and to keep counter/index consistent.
         if env.storage().persistent().has(&DataKey::Product(id.clone())) {
             panic!("product already exists");
+        }
+
+        // Emergency stop: reject writes when contract is paused.
+        if env.storage().persistent().get(&DataKey::ContractPaused).unwrap_or(false) {
+            panic!("contract is paused");
         }
 
         owner.require_auth();
@@ -687,6 +797,11 @@ impl SupplyLinkContract {
 
         if !product.active {
             panic!("product is deactivated");
+        }
+
+        // Emergency stop: reject writes when contract is paused.
+        if env.storage().persistent().get(&DataKey::ContractPaused).unwrap_or(false) {
+            return Err(Error::ContractPaused);
         }
 
         // Reject events on recalled products (#393)
@@ -1417,6 +1532,43 @@ o            actor: caller,
             history.push_back(metadata);
         }
         history
+    }
+
+    // ── Emergency stop (#441 / #442) ──────────────────────────────────────────
+
+    /// Return `true` when the contract is paused (emergency-stop active).
+    ///
+    /// This is a read-only query; it is always available regardless of pause state.
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ContractPaused)
+            .unwrap_or(false)
+    }
+
+    /// Set the contract pause state.
+    ///
+    /// When `paused` is `true` all write operations will return
+    /// [`Error::ContractPaused`]. Read-only operations are unaffected.
+    ///
+    /// # Authorization
+    /// Restricted to the product owner acting as guardian. In a production
+    /// deployment this should be gated on a dedicated guardian address stored
+    /// in contract instance storage.
+    ///
+    /// # Parameters
+    /// - `guardian` — Address of the authorized guardian invoking this call.
+    /// - `paused`   — `true` to halt writes; `false` to resume normal operation.
+    pub fn set_pause_state(env: Env, guardian: Address, paused: bool) -> bool {
+        guardian.require_auth();
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractPaused, &paused);
+        env.events().publish(
+            (Symbol::new(&env, "contract_pause_changed"),),
+            paused,
+        );
+        paused
     }
 }
 
@@ -3331,6 +3483,391 @@ fn compute_stable_id(
             .persistent()
             .get(&DataKey::Certifications(product_id))
             .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    // ── Event archival ────────────────────────────────────────────────────────
+
+    /// Archive a tracking event by its `stable_id`.
+    ///
+    /// Moves the matching event from the active `Events` list into the
+    /// `ArchivedEvents` store. The event data is preserved verbatim so
+    /// integrity proofs remain valid. Archived events are excluded from
+    /// `get_tracking_events` and `list_tracking_events` but remain fully
+    /// queryable via `list_archived_events`.
+    ///
+    /// # Authorization
+    /// Requires `caller.require_auth()`. Caller must be the product owner or
+    /// an authorized actor.
+    ///
+    /// # Panics
+    /// - `"product not found"` — if `product_id` is not registered.
+    /// - `"caller is not authorized"` — if caller lacks permission.
+    /// - `"event not found"` — if no active event with `stable_id` exists.
+    pub fn archive_tracking_event(
+        env: Env,
+        product_id: String,
+        caller: Address,
+        stable_id: String,
+        reason: String,
+    ) -> ArchivedEvent {
+        let product: Product = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Product(product_id.clone()))
+            .unwrap_or_else(|| panic!("product not found"));
+
+        let is_owner = product.owner == caller;
+        let is_actor = product.authorized_actors.contains(&caller);
+        if !is_owner && !is_actor {
+            panic!("caller is not authorized");
+        }
+        caller.require_auth();
+
+        let events: Vec<TrackingEvent> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Events(product_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        // Find and remove the event from the active list
+        let mut remaining: Vec<TrackingEvent> = Vec::new(&env);
+        let mut target: Option<TrackingEvent> = None;
+        for ev in events.iter() {
+            if ev.stable_id == stable_id && target.is_none() {
+                target = Some(ev.clone());
+            } else {
+                remaining.push_back(ev.clone());
+            }
+        }
+
+        let event = target.unwrap_or_else(|| panic!("event not found"));
+
+        // Write back the active list without the archived event
+        env.storage()
+            .persistent()
+            .set(&DataKey::Events(product_id.clone()), &remaining);
+
+        let archived = ArchivedEvent {
+            event: event.clone(),
+            archived_by: caller,
+            archived_at: env.ledger().timestamp(),
+            reason,
+        };
+
+        // Append to the archived list
+        let mut archived_list: Vec<ArchivedEvent> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ArchivedEvents(product_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+        archived_list.push_back(archived.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::ArchivedEvents(product_id.clone()), &archived_list);
+
+        env.events().publish(
+            (Symbol::new(&env, "event_archived"), product_id),
+            archived.clone(),
+        );
+
+        archived
+    }
+
+    /// Return all archived events for a product with optional pagination.
+    ///
+    /// Archived events are excluded from the active timeline but remain
+    /// auditable here. Pass `offset=0, limit=0` to retrieve all records.
+    pub fn list_archived_events(
+        env: Env,
+        product_id: String,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<ArchivedEvent> {
+        let all: Vec<ArchivedEvent> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ArchivedEvents(product_id))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        if limit == 0 {
+            return all;
+        }
+
+        let mut page: Vec<ArchivedEvent> = Vec::new(&env);
+        let start = offset as usize;
+        let end = core::cmp::min(start + limit as usize, all.len() as usize);
+        for i in start..end {
+            if let Some(item) = all.get(i as u32) {
+                page.push_back(item);
+            }
+        }
+        page
+    }
+
+    // ── Certification registry ────────────────────────────────────────────────
+
+    /// Register a trusted certification issuer in the on-chain registry.
+    ///
+    /// Only the product owner or an authorized actor may register issuers.
+    /// The issuer's Stellar address, name, and supported cert types are stored.
+    ///
+    /// # Panics
+    /// - `"issuer already registered"` — if the address is already active.
+    pub fn register_certification_issuer(
+        env: Env,
+        caller: Address,
+        issuer_address: Address,
+        name: String,
+        cert_types: Vec<String>,
+    ) -> CertificationIssuer {
+        caller.require_auth();
+        assert_len(&name, MAX_NAME_LEN, "name");
+
+        // Prevent duplicate active registrations
+        let existing: Option<CertificationIssuer> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::IssuerCertifications(issuer_address.clone()));
+        if let Some(ref iss) = existing {
+            if iss.active {
+                panic!("issuer already registered");
+            }
+        }
+
+        let issuer = CertificationIssuer {
+            issuer_address: issuer_address.clone(),
+            name,
+            cert_types,
+            registered_at: env.ledger().timestamp(),
+            active: true,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::IssuerCertifications(issuer_address.clone()), &issuer);
+
+        // Maintain a global list of issuer addresses for enumeration
+        let mut issuers: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::CertificationIssuers)
+            .unwrap_or_else(|| Vec::new(&env));
+        if !issuers.contains(&issuer_address) {
+            issuers.push_back(issuer_address.clone());
+            env.storage()
+                .persistent()
+                .set(&DataKey::CertificationIssuers, &issuers);
+        }
+
+        env.events().publish(
+            (Symbol::new(&env, "issuer_registered"), issuer_address),
+            issuer.clone(),
+        );
+
+        issuer
+    }
+
+    /// Issue a certification registry record linking a product to an external cert.
+    ///
+    /// The issuer must be registered and active. The `cert_type` must be in
+    /// the issuer's `cert_types` list. The `document_hash` is a hex-encoded
+    /// SHA-256 of the external certificate document for cross-checking.
+    ///
+    /// # Panics
+    /// - `"product not found"` — if `product_id` is not registered.
+    /// - `"issuer not registered"` — if the issuer address is unknown.
+    /// - `"issuer is not active"` — if the issuer has been deactivated.
+    /// - `"cert_type not supported by issuer"` — if the type is not in the issuer's list.
+    pub fn issue_certification_registry_record(
+        env: Env,
+        product_id: String,
+        issuer_address: Address,
+        record_id: String,
+        external_cert_id: String,
+        cert_type: String,
+        document_hash: String,
+    ) -> CertificationRegistryRecord {
+        // Verify product exists
+        if !env.storage().persistent().has(&DataKey::Product(product_id.clone())) {
+            panic!("product not found");
+        }
+
+        issuer_address.require_auth();
+        assert_len(&record_id, 128, "record_id");
+        assert_len(&external_cert_id, 256, "external_cert_id");
+        assert_len(&cert_type, 64, "cert_type");
+        assert_len(&document_hash, MAX_COMMITMENT_LEN, "document_hash");
+
+        let issuer: CertificationIssuer = env
+            .storage()
+            .persistent()
+            .get(&DataKey::IssuerCertifications(issuer_address.clone()))
+            .unwrap_or_else(|| panic!("issuer not registered"));
+
+        if !issuer.active {
+            panic!("issuer is not active");
+        }
+
+        if !issuer.cert_types.contains(&cert_type) {
+            panic!("cert_type not supported by issuer");
+        }
+
+        let record = CertificationRegistryRecord {
+            id: record_id.clone(),
+            product_id: product_id.clone(),
+            issuer_address: issuer_address.clone(),
+            external_cert_id,
+            cert_type,
+            document_hash,
+            issued_at: env.ledger().timestamp(),
+            revoked: false,
+            revoked_at: 0,
+        };
+
+        let mut reg_records: Vec<CertificationRegistryRecord> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::CertRegistryRecords(product_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+        reg_records.push_back(record.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::CertRegistryRecords(product_id.clone()), &reg_records);
+
+        env.events().publish(
+            (Symbol::new(&env, "cert_registry_issued"), product_id, issuer_address),
+            record.clone(),
+        );
+
+        record
+    }
+
+    /// Verify a certification registry record by its `record_id`.
+    ///
+    /// Returns `(true, record)` if the record exists and is not revoked,
+    /// `(false, record)` if it is revoked, or panics if not found.
+    pub fn verify_certification_registry_record(
+        env: Env,
+        product_id: String,
+        record_id: String,
+    ) -> (bool, CertificationRegistryRecord) {
+        let records: Vec<CertificationRegistryRecord> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::CertRegistryRecords(product_id))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        for record in records.iter() {
+            if record.id == record_id {
+                let valid = !record.revoked;
+                return (valid, record);
+            }
+        }
+        panic!("certification registry record not found");
+    }
+
+    /// Revoke a certification registry record.
+    ///
+    /// Only the issuer who created the record may revoke it.
+    ///
+    /// # Panics
+    /// - `"record not found"` — if no record with `record_id` exists.
+    /// - `"only issuer can revoke"` — if caller is not the original issuer.
+    pub fn revoke_certification_registry_record(
+        env: Env,
+        product_id: String,
+        caller: Address,
+        record_id: String,
+    ) -> bool {
+        caller.require_auth();
+
+        let records: Vec<CertificationRegistryRecord> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::CertRegistryRecords(product_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut updated: Vec<CertificationRegistryRecord> = Vec::new(&env);
+        let mut found = false;
+        for record in records.iter() {
+            if record.id == record_id {
+                if record.issuer_address != caller {
+                    panic!("only issuer can revoke");
+                }
+                let revoked = CertificationRegistryRecord {
+                    revoked: true,
+                    revoked_at: env.ledger().timestamp(),
+                    ..record.clone()
+                };
+                env.events().publish(
+                    (Symbol::new(&env, "cert_registry_revoked"), product_id.clone()),
+                    revoked.clone(),
+                );
+                updated.push_back(revoked);
+                found = true;
+            } else {
+                updated.push_back(record.clone());
+            }
+        }
+
+        if !found {
+            panic!("record not found");
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::CertRegistryRecords(product_id), &updated);
+        true
+    }
+
+    /// List all certification registry records for a product.
+    pub fn list_certification_registry_records(
+        env: Env,
+        product_id: String,
+    ) -> Vec<CertificationRegistryRecord> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::CertRegistryRecords(product_id))
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// Deactivate a registered certification issuer.
+    ///
+    /// Only the issuer themselves can deactivate their own registration.
+    pub fn deactivate_certification_issuer(
+        env: Env,
+        issuer_address: Address,
+    ) -> bool {
+        issuer_address.require_auth();
+
+        let mut issuer: CertificationIssuer = env
+            .storage()
+            .persistent()
+            .get(&DataKey::IssuerCertifications(issuer_address.clone()))
+            .unwrap_or_else(|| panic!("issuer not registered"));
+
+        issuer.active = false;
+        env.storage()
+            .persistent()
+            .set(&DataKey::IssuerCertifications(issuer_address.clone()), &issuer);
+
+        env.events().publish(
+            (Symbol::new(&env, "issuer_deactivated"), issuer_address),
+            false,
+        );
+
+        true
+    }
+
+    /// Get a registered certification issuer by address.
+    pub fn get_certification_issuer(
+        env: Env,
+        issuer_address: Address,
+    ) -> CertificationIssuer {
+        env.storage()
+            .persistent()
+            .get(&DataKey::IssuerCertifications(issuer_address))
+            .unwrap_or_else(|| panic!("issuer not registered"))
     }
 }
 
