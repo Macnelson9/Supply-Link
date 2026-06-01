@@ -549,6 +549,41 @@ pub struct CertificationRegistryRecord {
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
 
+/// Signer proof for a tracking event (#402).
+///
+/// Stores the actor address and a deterministic payload hash that external
+/// clients can verify without trusting the application.
+#[contracttype]
+#[derive(Clone)]
+pub struct SignerProof {
+    /// Stable event ID this proof belongs to.
+    pub event_stable_id: String,
+    /// Address of the actor who submitted the event.
+    pub signer: Address,
+    /// SHA-256 hex hash of `product_id|actor|event_type|timestamp|metadata`.
+    pub payload_hash: String,
+    /// Ledger timestamp when the proof was recorded.
+    pub timestamp: u64,
+}
+
+/// An immutable audit snapshot of a product's state (#400).
+#[contracttype]
+#[derive(Clone)]
+pub struct AuditSnapshot {
+    /// Unique snapshot ID (hex-encoded SHA-256 of product_id + timestamp).
+    pub id: String,
+    /// Product ID this snapshot covers.
+    pub product_id: String,
+    /// SHA-256 hex hash of the serialised product state + event list.
+    pub snapshot_hash: String,
+    /// Address of the owner who created the snapshot.
+    pub created_by: Address,
+    /// Ledger timestamp when the snapshot was created.
+    pub timestamp: u64,
+    /// Number of events included in the snapshot.
+    pub event_count: u32,
+}
+
 #[contracttype]
 pub enum DataKey {
     Product(String),
@@ -615,6 +650,22 @@ pub enum DataKey {
     PendingEvent(String),
     /// Provenance root hash for a product. The inner `String` is the product ID.
     ProvenanceRoot(String),
+    // ── #403: Event indexing ──────────────────────────────────────────────────
+    /// Index of stable_ids for events by actor address.
+    EventsByActor(Address),
+    /// Index of stable_ids for events by location string.
+    EventsByLocation(String),
+    /// Index of stable_ids for events by event_type string.
+    EventsByType(String),
+    // ── #402: Signer proof ────────────────────────────────────────────────────
+    /// Signer proof record keyed by event stable_id.
+    SignerProof(String),
+    // ── #401: Event-hash deduplication ───────────────────────────────────────
+    /// Marks a stable_id as already recorded (replay protection).
+    EventHashSeen(String),
+    // ── #400: Audit snapshots ─────────────────────────────────────────────────
+    /// Snapshots for a product. The inner `String` is the product ID.
+    Snapshots(String),
 }
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -882,6 +933,11 @@ impl SupplyLinkContract {
         // Compute stable_id: SHA-256 of "product_id|event_type|timestamp" encoded as bytes
         let stable_id = compute_stable_id(&env, &product_id, &caller, &event_type, timestamp, &metadata);
 
+        // #401: Replay protection — reject duplicate event hashes
+        if env.storage().persistent().get::<DataKey, bool>(&DataKey::EventHashSeen(stable_id.clone())).unwrap_or(false) {
+            panic!("duplicate event: replay detected");
+        }
+
         // Enforce lifecycle transition (#404)
         if !validate_lifecycle_transition(&env, &product.lifecycle_stage, &event_type) {
             panic!("invalid lifecycle transition");
@@ -1048,6 +1104,9 @@ o            actor: caller,
             env.storage()
                 .persistent()
                 .set(&DataKey::Events(product_id.clone()), &events);
+
+            // #403/#402/#401: update indexes, store proof, mark hash seen
+            update_event_indexes(env, &event);
 
             env.events().publish(
                 (Symbol::new(env, "event_added"), product_id, event_type, EVENT_SCHEMA_VERSION),
@@ -5387,7 +5446,218 @@ mod rejection_reason_tests {
     }
 }
 
+// ── #403 / #402 / #401 / #400 helper: update event indexes ───────────────────
+
+fn update_event_indexes(env: &Env, event: &TrackingEvent) {
+    // #403 — actor index
+    let mut by_actor: Vec<String> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::EventsByActor(event.actor.clone()))
+        .unwrap_or_else(|| Vec::new(env));
+    by_actor.push_back(event.stable_id.clone());
+    env.storage()
+        .persistent()
+        .set(&DataKey::EventsByActor(event.actor.clone()), &by_actor);
+
+    // #403 — location index
+    let mut by_loc: Vec<String> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::EventsByLocation(event.location.clone()))
+        .unwrap_or_else(|| Vec::new(env));
+    by_loc.push_back(event.stable_id.clone());
+    env.storage()
+        .persistent()
+        .set(&DataKey::EventsByLocation(event.location.clone()), &by_loc);
+
+    // #403 — event_type index
+    let mut by_type: Vec<String> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::EventsByType(event.event_type.clone()))
+        .unwrap_or_else(|| Vec::new(env));
+    by_type.push_back(event.stable_id.clone());
+    env.storage()
+        .persistent()
+        .set(&DataKey::EventsByType(event.event_type.clone()), &by_type);
+
+    // #402 — signer proof
+    let proof = SignerProof {
+        event_stable_id: event.stable_id.clone(),
+        signer: event.actor.clone(),
+        payload_hash: event.stable_id.clone(), // stable_id IS the SHA-256 payload hash
+        timestamp: event.timestamp,
+    };
+    env.storage()
+        .persistent()
+        .set(&DataKey::SignerProof(event.stable_id.clone()), &proof);
+
+    // #401 — mark hash as seen (replay protection)
+    env.storage()
+        .persistent()
+        .set(&DataKey::EventHashSeen(event.stable_id.clone()), &true);
+}
+
+#[contractimpl]
+impl SupplyLinkContract {
+    // ── #403: Event index queries ─────────────────────────────────────────────
+
+    /// List stable_ids of events submitted by a given actor, with pagination.
+    pub fn list_events_by_actor(
+        env: Env,
+        actor: Address,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<String> {
+        let all: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EventsByActor(actor))
+            .unwrap_or_else(|| Vec::new(&env));
+        paginate_string_vec(&env, &all, offset, limit)
+    }
+
+    /// List stable_ids of events recorded at a given location, with pagination.
+    pub fn list_events_by_location(
+        env: Env,
+        location: String,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<String> {
+        let all: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EventsByLocation(location))
+            .unwrap_or_else(|| Vec::new(&env));
+        paginate_string_vec(&env, &all, offset, limit)
+    }
+
+    /// List stable_ids of events of a given event_type, with pagination.
+    pub fn list_events_by_type(
+        env: Env,
+        event_type: String,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<String> {
+        let all: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EventsByType(event_type))
+            .unwrap_or_else(|| Vec::new(&env));
+        paginate_string_vec(&env, &all, offset, limit)
+    }
+
+    // ── #402: Signer proof query ──────────────────────────────────────────────
+
+    /// Retrieve the signer proof for a given event stable_id.
+    pub fn get_signer_proof(env: Env, event_stable_id: String) -> Option<SignerProof> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::SignerProof(event_stable_id))
+    }
+
+    // ── #401: Replay protection check ────────────────────────────────────────
+
+    /// Returns true if an event with this stable_id has already been recorded.
+    pub fn is_event_replayed(env: Env, stable_id: String) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::EventHashSeen(stable_id))
+            .unwrap_or(false)
+    }
+
+    // ── #400: Audit snapshots ─────────────────────────────────────────────────
+
+    /// Create an immutable audit snapshot of a product's current state.
+    ///
+    /// The caller supplies a `snapshot_hash` — a SHA-256 hex digest of the
+    /// serialised product state + event list computed off-chain. The contract
+    /// stores it with a timestamp so it can be verified later.
+    ///
+    /// # Authorization
+    /// Requires `product.owner.require_auth()`.
+    pub fn snapshot_product_state(
+        env: Env,
+        product_id: String,
+        snapshot_hash: String,
+    ) -> AuditSnapshot {
+        let product: Product = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Product(product_id.clone()))
+            .unwrap_or_else(|| panic!("product not found"));
+
+        product.owner.require_auth();
+        assert_len(&snapshot_hash, 128, "snapshot_hash");
+
+        let event_count: u32 = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Vec<TrackingEvent>>(&DataKey::Events(product_id.clone()))
+            .map(|v| v.len())
+            .unwrap_or(0);
+
+        let timestamp = env.ledger().timestamp();
+
+        // Snapshot ID = SHA-256 of product_id + timestamp
+        let snap_id = compute_stable_id(
+            &env,
+            &product_id,
+            &product.owner,
+            &String::from_str(&env, "SNAPSHOT"),
+            timestamp,
+            &snapshot_hash,
+        );
+
+        let snapshot = AuditSnapshot {
+            id: snap_id.clone(),
+            product_id: product_id.clone(),
+            snapshot_hash,
+            created_by: product.owner.clone(),
+            timestamp,
+            event_count,
+        };
+
+        let mut snaps: Vec<AuditSnapshot> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Snapshots(product_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+        snaps.push_back(snapshot.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::Snapshots(product_id.clone()), &snaps);
+
+        env.events().publish(
+            (Symbol::new(&env, "snapshot_created"), product_id),
+            snapshot.clone(),
+        );
+
+        snapshot
+    }
+
+    /// Retrieve all audit snapshots for a product.
+    pub fn get_snapshots(env: Env, product_id: String) -> Vec<AuditSnapshot> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Snapshots(product_id))
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+}
+
 // ── Helper functions ─────────────────────────────────────────────────────────
+
+fn paginate_string_vec(env: &Env, all: &Vec<String>, offset: u32, limit: u32) -> Vec<String> {
+    let mut result = Vec::new(env);
+    let len = all.len();
+    let start = offset.min(len);
+    let end = (offset + limit).min(len);
+    for i in start..end {
+        result.push_back(all.get(i).unwrap());
+    }
+    result
+}
 
 fn format_cert_id(env: &Env, product_id: &String, event_stable_id: &String) -> String {
     let mut result = String::from_str(env, "cert_");

@@ -2,6 +2,7 @@
 
 import { useState, type ChangeEvent } from 'react';
 import { contractClient } from '@/lib/stellar/contract';
+import { createAuditSnapshot } from '@/lib/stellar/snapshot';
 import { useStore } from '@/lib/state/store';
 import { toast } from 'sonner';
 
@@ -11,7 +12,7 @@ interface ProductActionsProps {
   onProductUpdated?: () => void;
 }
 
-type ModalType = 'event' | 'transfer' | 'actor' | 'deactivate' | null;
+type ModalType = 'event' | 'transfer' | 'actor' | 'deactivate' | 'snapshot' | null;
 
 export default function ProductActions({
   productId,
@@ -76,6 +77,32 @@ export default function ProductActions({
       return;
     }
 
+    if (action === 'snapshot') {
+      if (!walletAddress) {
+        toast.error('Wallet not connected');
+        return;
+      }
+      setLoading(true);
+      try {
+        const [product, events] = await Promise.all([
+          contractClient.getProduct(productId, walletAddress),
+          contractClient.getTrackingEvents(productId, walletAddress),
+        ]);
+        const txHash = await createAuditSnapshot(
+          { productId, product, events: events as unknown[] },
+          walletAddress,
+        );
+        toast.success(`Snapshot created. TX: ${txHash.slice(0, 8)}...`);
+        close();
+        onProductUpdated?.();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Snapshot failed');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     // TODO: implement other actions
     console.log(`Action: ${action}, productId: ${productId}, input: ${input}`);
     close();
@@ -94,6 +121,11 @@ export default function ProductActions({
       variant: 'bg-green-600 text-white hover:bg-green-700',
     },
     { label: 'Deactivate', type: 'deactivate', variant: 'bg-red-600 text-white hover:bg-red-700' },
+    {
+      label: 'Create Snapshot',
+      type: 'snapshot',
+      variant: 'bg-purple-600 text-white hover:bg-purple-700',
+    },
   ];
 
   const MODAL_CONFIG: Record<NonNullable<ModalType>, { title: string; placeholder: string }> = {
@@ -101,6 +133,10 @@ export default function ProductActions({
     transfer: { title: 'Transfer Ownership', placeholder: 'New owner Stellar address' },
     actor: { title: 'Add Authorized Actor', placeholder: 'Actor Stellar address' },
     deactivate: { title: 'Deactivate Product (Recall)', placeholder: 'Recall reason (optional)' },
+    snapshot: {
+      title: 'Create Audit Snapshot',
+      placeholder: 'Snapshot will capture current product state and all events.',
+    },
   };
 
   return (

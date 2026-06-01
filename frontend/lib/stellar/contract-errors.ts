@@ -16,41 +16,38 @@ export interface ContractErrorInfo {
 
 export const CONTRACT_ERROR_CODES: Record<number, ContractErrorInfo> = {
   1: {
-    title: "Product not found",
-    message: "No product with this ID exists on-chain.",
+    title: 'Product not found',
+    message: 'No product with this ID exists on-chain.',
     recoverable: false,
   },
   2: {
-    title: "Product already exists",
-    message: "A product with this ID is already registered.",
+    title: 'Product already exists',
+    message: 'A product with this ID is already registered.',
     recoverable: true,
   },
   3: {
-    title: "Unauthorized",
-    message: "Your wallet is not authorized to perform this action.",
+    title: 'Unauthorized',
+    message: 'Your wallet is not authorized to perform this action.',
     recoverable: false,
   },
   4: {
-    title: "Ownership mismatch",
-    message:
-      "The provided owner address does not match the current owner.",
+    title: 'Ownership mismatch',
+    message: 'The provided owner address does not match the current owner.',
     recoverable: false,
   },
   5: {
-    title: "Invalid event payload",
-    message: "The event data is malformed or missing required fields.",
+    title: 'Invalid event payload',
+    message: 'The event data is malformed or missing required fields.',
     recoverable: true,
   },
   6: {
-    title: "Product recalled",
-    message:
-      "This product has been recalled and cannot receive new events.",
+    title: 'Product recalled',
+    message: 'This product has been recalled and cannot receive new events.',
     recoverable: false,
   },
   7: {
-    title: "Self-transfer not allowed",
-    message:
-      "The new owner must be a different address from the current owner.",
+    title: 'Self-transfer not allowed',
+    message: 'The new owner must be a different address from the current owner.',
     recoverable: true,
   },
 };
@@ -61,10 +58,8 @@ export const CONTRACT_ERROR_CODES: Record<number, ContractErrorInfo> = {
  * Soroban surfaces contract errors as strings like `"Error(Contract, #1)"`.
  * Returns `null` when the error is not a recognised contract error.
  */
-export function parseContractError(
-  error: unknown
-): (ContractErrorInfo & { code: number }) | null {
-  if (typeof error !== "string" && !(error instanceof Error)) return null;
+export function parseContractError(error: unknown): (ContractErrorInfo & { code: number }) | null {
+  if (typeof error !== 'string' && !(error instanceof Error)) return null;
 
   const msg = error instanceof Error ? error.message : error;
   const match = msg.match(/Error\(Contract,\s*#(\d+)\)/);
@@ -73,6 +68,9 @@ export function parseContractError(
   const code = parseInt(match[1], 10);
   const info = CONTRACT_ERROR_CODES[code];
   return info ? { code, ...info } : null;
+}
+
+/**
  * Stable error codes emitted by the Supply-Link Soroban contract.
  *
  * These map 1-to-1 to the `#[contracterror]` enum in the Rust contract.
@@ -86,6 +84,8 @@ export const ContractErrorCode = {
   OwnerOnly: 5,
   PendingEventExpired: 6,
   InvalidNonce: 7,
+  /** #401: Duplicate event hash detected — replay attempt rejected. */
+  DuplicateEvent: 8,
 } as const;
 
 export type ContractErrorCode = (typeof ContractErrorCode)[keyof typeof ContractErrorCode];
@@ -141,6 +141,12 @@ const ERROR_MAP: Record<ContractErrorCode, MappedContractError> = {
     code: ContractErrorCode.InvalidNonce,
     key: 'INVALID_NONCE',
     message: 'The supplied nonce does not match the expected sequential value. Refresh and retry.',
+    httpStatus: 409,
+  },
+  [ContractErrorCode.DuplicateEvent]: {
+    code: ContractErrorCode.DuplicateEvent,
+    key: 'DUPLICATE_EVENT',
+    message: 'This event has already been recorded on-chain. Replay attempt rejected.',
     httpStatus: 409,
   },
 };

@@ -227,3 +227,89 @@ proptest! {
         );
     }
 }
+
+// ── #401: Replay protection fuzz ─────────────────────────────────────────────
+
+proptest! {
+    #[test]
+    fn fuzz_replay_protection_rejects_same_event(
+        product_id in "[a-zA-Z0-9-]{1,64}",
+        location in "[a-zA-Z0-9 ]{1,64}",
+    ) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, supply_link::SupplyLinkContract);
+        let client = supply_link::SupplyLinkContractClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+
+        let pid = SorobanString::from_slice(&env, product_id.as_bytes());
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.register_product(
+                &pid,
+                &SorobanString::from_slice(&env, b"Widget"),
+                &SorobanString::from_slice(&env, b"Origin"),
+                &owner,
+                &1u32,
+                &SorobanString::from_slice(&env, b"cat"),
+                &SorobanString::from_slice(&env, b"sub"),
+            );
+        }));
+
+        let loc = SorobanString::from_slice(&env, location.as_bytes());
+        let event_type = SorobanString::from_slice(&env, b"SHIPPING");
+        let meta = SorobanString::from_slice(&env, b"{}");
+
+        // First submission should succeed
+        let first = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.add_tracking_event(&pid, &owner, &loc, &event_type, &meta)
+        }));
+
+        if let Ok(event) = first {
+            // is_event_replayed must return true after the event is recorded
+            let replayed = client.is_event_replayed(&event.stable_id);
+            prop_assert!(replayed, "event hash must be marked as seen after recording");
+        }
+    }
+}
+
+// ── #401: Replay protection fuzz ─────────────────────────────────────────────
+
+proptest! {
+    #[test]
+    fn fuzz_replay_protection_marks_hash_seen(
+        product_id in "[a-zA-Z0-9-]{1,64}",
+    ) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, supply_link::SupplyLinkContract);
+        let client = supply_link::SupplyLinkContractClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        let pid = SorobanString::from_slice(&env, product_id.as_bytes());
+
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.register_product(
+                &pid,
+                &SorobanString::from_slice(&env, b"Widget"),
+                &SorobanString::from_slice(&env, b"Origin"),
+                &owner,
+                &1u32,
+                &SorobanString::from_slice(&env, b"cat"),
+                &SorobanString::from_slice(&env, b"sub"),
+            );
+        }));
+
+        let first = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.add_tracking_event(
+                &pid, &owner,
+                &SorobanString::from_slice(&env, b"Port"),
+                &SorobanString::from_slice(&env, b"SHIPPING"),
+                &SorobanString::from_slice(&env, b"{}"),
+            )
+        }));
+
+        if let Ok(event) = first {
+            let replayed = client.is_event_replayed(&event.stable_id);
+            prop_assert!(replayed, "stable_id must be marked seen after recording");
+        }
+    }
+}

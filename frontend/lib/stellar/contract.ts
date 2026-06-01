@@ -518,4 +518,145 @@ export const contractClient = {
       throw err;
     });
   },
+
+  // ── #403: Event index queries ─────────────────────────────────────────────
+
+  async listEventsByActor(
+    actor: string,
+    offset: number,
+    limit: number,
+    callerAddress: string,
+  ): Promise<string[]> {
+    return withContractRetry(async () => {
+      const simulated = await buildAndSimulateTransaction({
+        method: 'list_events_by_actor',
+        args: [new Address(actor), offset, limit],
+        callerAddress,
+      });
+      if (rpc.Api.isSimulationSuccess(simulated)) {
+        return (scValToNative(simulated.result!.retval) as string[]) || [];
+      }
+      throw new Error('Failed to list events by actor');
+    });
+  },
+
+  async listEventsByLocation(
+    location: string,
+    offset: number,
+    limit: number,
+    callerAddress: string,
+  ): Promise<string[]> {
+    return withContractRetry(async () => {
+      const simulated = await buildAndSimulateTransaction({
+        method: 'list_events_by_location',
+        args: [location, offset, limit],
+        callerAddress,
+      });
+      if (rpc.Api.isSimulationSuccess(simulated)) {
+        return (scValToNative(simulated.result!.retval) as string[]) || [];
+      }
+      throw new Error('Failed to list events by location');
+    });
+  },
+
+  async listEventsByType(
+    eventType: string,
+    offset: number,
+    limit: number,
+    callerAddress: string,
+  ): Promise<string[]> {
+    return withContractRetry(async () => {
+      const simulated = await buildAndSimulateTransaction({
+        method: 'list_events_by_type',
+        args: [eventType, offset, limit],
+        callerAddress,
+      });
+      if (rpc.Api.isSimulationSuccess(simulated)) {
+        return (scValToNative(simulated.result!.retval) as string[]) || [];
+      }
+      throw new Error('Failed to list events by type');
+    });
+  },
+
+  // ── #402: Signer proof ────────────────────────────────────────────────────
+
+  async getSignerProof(
+    eventStableId: string,
+    callerAddress: string,
+  ): Promise<{ signer: string; payloadHash: string; timestamp: number } | null> {
+    return withContractRetry(async () => {
+      const simulated = await buildAndSimulateTransaction({
+        method: 'get_signer_proof',
+        args: [eventStableId],
+        callerAddress,
+      });
+      if (rpc.Api.isSimulationSuccess(simulated)) {
+        const raw = scValToNative(simulated.result!.retval);
+        if (!raw) return null;
+        const r = raw as Record<string, unknown>;
+        return {
+          signer: r['signer'] as string,
+          payloadHash: r['payload_hash'] as string,
+          timestamp: Number(r['timestamp']),
+        };
+      }
+      throw new Error('Failed to get signer proof');
+    });
+  },
+
+  // ── #401: Replay check ────────────────────────────────────────────────────
+
+  async isEventReplayed(stableId: string, callerAddress: string): Promise<boolean> {
+    return withContractRetry(async () => {
+      const simulated = await buildAndSimulateTransaction({
+        method: 'is_event_replayed',
+        args: [stableId],
+        callerAddress,
+      });
+      if (rpc.Api.isSimulationSuccess(simulated)) {
+        return Boolean(scValToNative(simulated.result!.retval));
+      }
+      throw new Error('Failed to check replay');
+    });
+  },
+
+  // ── #400: Audit snapshots ─────────────────────────────────────────────────
+
+  async snapshotProductState(
+    productId: string,
+    snapshotHash: string,
+    callerAddress: string,
+  ): Promise<string> {
+    return withContractWriteRetry(() =>
+      buildSignAndSubmitTransaction({
+        method: 'snapshot_product_state',
+        args: [productId, snapshotHash],
+        callerAddress,
+      }),
+    )
+      .then((hash) => {
+        recordDependency('soroban-rpc', true);
+        recordOperation('snapshot.create', 'success');
+        return hash;
+      })
+      .catch((err) => {
+        recordDependency('soroban-rpc', false);
+        recordOperation('snapshot.create', 'failure');
+        throw err;
+      });
+  },
+
+  async getSnapshots(productId: string, callerAddress: string): Promise<unknown[]> {
+    return withContractRetry(async () => {
+      const simulated = await buildAndSimulateTransaction({
+        method: 'get_snapshots',
+        args: [productId],
+        callerAddress,
+      });
+      if (rpc.Api.isSimulationSuccess(simulated)) {
+        return (scValToNative(simulated.result!.retval) as unknown[]) || [];
+      }
+      throw new Error('Failed to get snapshots');
+    });
+  },
 };

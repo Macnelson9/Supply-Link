@@ -877,3 +877,153 @@ fn test_get_provenance_score_history() {
     assert_eq!(history.len(), 1);
     assert_eq!(history.get(0).unwrap().score, 75);
 }
+
+// ── #403: Event indexing ──────────────────────────────────────────────────────
+
+#[test]
+fn test_event_indexes_populated_on_add() {
+    use crate::{SupplyLinkContract, SupplyLinkContractClient};
+    use soroban_sdk::{testutils::Address as _, Address, Env, String};
+
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register_contract(None, SupplyLinkContract);
+    let client = SupplyLinkContractClient::new(&env, &cid);
+    let owner = Address::generate(&env);
+    let pid = String::from_str(&env, "idx-prod");
+
+    client.register_product(
+        &pid,
+        &String::from_str(&env, "Widget"),
+        &String::from_str(&env, "Origin"),
+        &owner,
+        &1u32,
+        &String::from_str(&env, "cat"),
+        &String::from_str(&env, "sub"),
+    );
+    client.add_tracking_event(
+        &pid,
+        &owner,
+        &String::from_str(&env, "Warehouse"),
+        &String::from_str(&env, "SHIPPING"),
+        &String::from_str(&env, "{}"),
+    );
+
+    let by_actor = client.list_events_by_actor(&owner, &0u32, &10u32);
+    assert_eq!(by_actor.len(), 1);
+
+    let by_loc = client.list_events_by_location(&String::from_str(&env, "Warehouse"), &0u32, &10u32);
+    assert_eq!(by_loc.len(), 1);
+
+    let by_type = client.list_events_by_type(&String::from_str(&env, "SHIPPING"), &0u32, &10u32);
+    assert_eq!(by_type.len(), 1);
+}
+
+// ── #402: Signer proof ────────────────────────────────────────────────────────
+
+#[test]
+fn test_signer_proof_stored_on_add() {
+    use crate::{SupplyLinkContract, SupplyLinkContractClient};
+    use soroban_sdk::{testutils::Address as _, Address, Env, String};
+
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register_contract(None, SupplyLinkContract);
+    let client = SupplyLinkContractClient::new(&env, &cid);
+    let owner = Address::generate(&env);
+    let pid = String::from_str(&env, "proof-prod");
+
+    client.register_product(
+        &pid,
+        &String::from_str(&env, "Widget"),
+        &String::from_str(&env, "Origin"),
+        &owner,
+        &1u32,
+        &String::from_str(&env, "cat"),
+        &String::from_str(&env, "sub"),
+    );
+    let event = client.add_tracking_event(
+        &pid,
+        &owner,
+        &String::from_str(&env, "Port"),
+        &String::from_str(&env, "SHIPPING"),
+        &String::from_str(&env, "{}"),
+    );
+
+    let proof = client.get_signer_proof(&event.stable_id);
+    assert!(proof.is_some());
+    let p = proof.unwrap();
+    assert_eq!(p.signer, owner);
+    assert_eq!(p.payload_hash, event.stable_id);
+}
+
+// ── #401: Replay protection ───────────────────────────────────────────────────
+
+#[test]
+fn test_replay_protection_rejects_duplicate() {
+    use crate::{SupplyLinkContract, SupplyLinkContractClient};
+    use soroban_sdk::{testutils::Address as _, Address, Env, String};
+
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register_contract(None, SupplyLinkContract);
+    let client = SupplyLinkContractClient::new(&env, &cid);
+    let owner = Address::generate(&env);
+    let pid = String::from_str(&env, "replay-prod");
+
+    client.register_product(
+        &pid,
+        &String::from_str(&env, "Widget"),
+        &String::from_str(&env, "Origin"),
+        &owner,
+        &1u32,
+        &String::from_str(&env, "cat"),
+        &String::from_str(&env, "sub"),
+    );
+    let event = client.add_tracking_event(
+        &pid,
+        &owner,
+        &String::from_str(&env, "Port"),
+        &String::from_str(&env, "SHIPPING"),
+        &String::from_str(&env, "{}"),
+    );
+
+    // The stable_id should now be marked as seen
+    let replayed = client.is_event_replayed(&event.stable_id);
+    assert!(replayed);
+}
+
+// ── #400: Audit snapshots ─────────────────────────────────────────────────────
+
+#[test]
+fn test_snapshot_created_and_retrievable() {
+    use crate::{SupplyLinkContract, SupplyLinkContractClient};
+    use soroban_sdk::{testutils::Address as _, Address, Env, String};
+
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register_contract(None, SupplyLinkContract);
+    let client = SupplyLinkContractClient::new(&env, &cid);
+    let owner = Address::generate(&env);
+    let pid = String::from_str(&env, "snap-prod");
+
+    client.register_product(
+        &pid,
+        &String::from_str(&env, "Widget"),
+        &String::from_str(&env, "Origin"),
+        &owner,
+        &1u32,
+        &String::from_str(&env, "cat"),
+        &String::from_str(&env, "sub"),
+    );
+
+    let hash = String::from_str(&env, "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890");
+    let snap = client.snapshot_product_state(&pid, &hash);
+    assert_eq!(snap.product_id, pid);
+    assert_eq!(snap.snapshot_hash, hash);
+    assert_eq!(snap.event_count, 0u32);
+
+    let snaps = client.get_snapshots(&pid);
+    assert_eq!(snaps.len(), 1);
+    assert_eq!(snaps.get(0).unwrap().id, snap.id);
+}
