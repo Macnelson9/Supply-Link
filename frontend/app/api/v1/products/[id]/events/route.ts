@@ -257,23 +257,16 @@ export async function GET(
 ): Promise<NextResponse> {
   const start = Date.now();
 
-  // Apply IP-based rate limiting (stricter for anonymous public read; wallet users get more headroom)
+  // Public read endpoint — no authentication required.
   const limited = applyRateLimit(
     request,
     'GET /api/v1/products/[id]/events',
     RATE_LIMIT_PRESETS.publicRead,
-    RATE_LIMIT_PRESETS.authenticated,
+    RATE_LIMIT_PRESETS.publicRead,
   );
   if (limited) {
     recordRequest('GET /api/v1/products/[id]/events', 429, Date.now() - start);
     return limited;
-  }
-
-  // Authenticate API key
-  const auth = await authenticateApiRequest(request, 'partner');
-  if (auth.error) {
-    recordRequest('GET /api/v1/products/[id]/events', 401, Date.now() - start);
-    return auth.error;
   }
 
   const { id } = await params;
@@ -283,7 +276,7 @@ export async function GET(
     return apiError(request, 400, ErrorCode.VALIDATION_ERROR, 'Invalid product ID');
   }
 
-  const response = await listEvents(request, id, auth.apiKey!);
+  const response = await listEvents(request, id, '');
   recordRequest('GET /api/v1/products/[id]/events', response.status, Date.now() - start);
   return response;
 }
