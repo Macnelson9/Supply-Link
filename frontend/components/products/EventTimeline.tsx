@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Archive } from 'lucide-react';
 import type { TrackingEvent, EventType } from '@/lib/types';
+import { calculateActorReputations, calculateEventTrust, getEventTrustBadgeClass } from '@/lib/services/eventTrust';
 import { PrivateMetadataViewer } from './PrivateMetadataViewer';
 
 const DEFAULT_EVENT_LABELS: Record<EventType, string> = {
@@ -48,6 +49,17 @@ export function EventTimeline({
 
   const labelFor = (type: EventType) => labels?.[type] ?? DEFAULT_EVENT_LABELS[type];
   const dateFmt = new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' });
+
+  const eventTrusts = useMemo(() => {
+    const reputations = calculateActorReputations(events);
+    const reputationByActor = new Map(reputations.map((r) => [r.actor, r]));
+    return new Map(
+      events.map((event) => {
+        const trust = calculateEventTrust(event, reputationByActor.get(event.actor));
+        return [event.stableId ?? `${event.actor}-${event.timestamp}`, trust] as const;
+      }),
+    );
+  }, [events]);
 
   const activeEvents = hideArchivedByDefault && !showArchived
     ? events.filter((e) => !e.archived)
@@ -110,7 +122,20 @@ export function EventTimeline({
                 )}
               </div>
               <p className="text-sm text-[var(--foreground)]">{event.location}</p>
-              <p className="text-xs text-[var(--muted)] font-mono mt-0.5 truncate">{event.actor}</p>
+              <div className="flex flex-wrap items-center gap-2 mt-1">
+                <p className="text-xs text-[var(--muted)] font-mono truncate">{event.actor}</p>
+                {eventTrusts.get(event.stableId ?? `${event.actor}-${event.timestamp}`) && (
+                  <span
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ${getEventTrustBadgeClass(
+                      eventTrusts.get(event.stableId ?? `${event.actor}-${event.timestamp}`)!.status,
+                    )}`}
+                    title={`Actor trust ${eventTrusts.get(event.stableId ?? `${event.actor}-${event.timestamp}`)!.eventTrustWeight}%`}
+                  >
+                    {eventTrusts.get(event.stableId ?? `${event.actor}-${event.timestamp}`)!.status}
+                    <span className="font-semibold">{eventTrusts.get(event.stableId ?? `${event.actor}-${event.timestamp}`)!.eventTrustWeight}%</span>
+                  </span>
+                )}
+              </div>
               {(event as TrackingEvent & { privateMetadata?: boolean; metadataCommitment?: string }).privateMetadata &&
               (event as TrackingEvent & { metadataCommitment?: string }).metadataCommitment ? (
                 <div className="mt-2">

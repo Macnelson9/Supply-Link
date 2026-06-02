@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { TrackingEvent, Product } from '@/lib/types';
+import { calculateActorReputations, averageActorTrustWeight } from '@/lib/services/eventTrust';
 import {
   calculateProvenanceScore,
   getProvenanceScorePercentage,
@@ -16,7 +17,12 @@ interface Props {
 
 export function ProvenanceScoreGauge({ events, product }: Props) {
   const [showTooltip, setShowTooltip] = useState(false);
-  const breakdown = calculateProvenanceScore(events, product);
+  const actorReputations = useMemo(() => calculateActorReputations(events), [events]);
+  const averageTrust = useMemo(
+    () => averageActorTrustWeight(actorReputations),
+    [actorReputations],
+  );
+  const breakdown = calculateProvenanceScore(events, product, averageTrust);
   const percentage = getProvenanceScorePercentage(breakdown);
   const label = getProvenanceScoreLabel(percentage);
   const colorClass = getProvenanceScoreColor(percentage);
@@ -114,9 +120,15 @@ export function ProvenanceScoreGauge({ events, product }: Props) {
                 {breakdown.authorizedActorDepth}/10
               </span>
             </li>
+            <li>
+              Actor Reputation:{' '}
+              <span className="font-mono text-[var(--foreground)]">
+                {breakdown.actorReputation}/10
+              </span>
+            </li>
           </ul>
           <p className="text-[var(--muted)] mt-2 text-xs">
-            Higher scores indicate more complete and consistent supply chain data.
+            Higher scores indicate more complete, consistent, and trustworthy supply chain data.
           </p>
         </div>
       )}

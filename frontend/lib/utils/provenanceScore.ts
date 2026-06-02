@@ -9,13 +9,16 @@ export interface ProvenanceScoreBreakdown {
   uniqueActors: number;
   /** Bonus for authorized actor depth (multi-party authorization). */
   authorizedActorDepth: number;
+  /** Actor reputation component derived from event actor trust scores. */
+  actorReputation: number;
 }
 
-const MAX_SCORE = 80; // raised from 70 to accommodate new factor
+const MAX_SCORE = 90; // includes actor reputation as a trust factor
 
 export function calculateProvenanceScore(
   events: TrackingEvent[],
   product?: Pick<Product, 'authorizedActors'>,
+  actorReputationWeight: number = 50,
 ): ProvenanceScoreBreakdown {
   let score = 0;
 
@@ -69,6 +72,10 @@ export function calculateProvenanceScore(
   const authorizedActorDepthScore = Math.min(authorizedCount * 2, 10);
   score += authorizedActorDepthScore;
 
+  // 7. Actor reputation (up to 10 pts): average trust of all actors involved in the product history
+  const actorReputationScore = Math.min(Math.round((actorReputationWeight / 100) * 10), 10);
+  score += actorReputationScore;
+
   return {
     total: Math.min(score, MAX_SCORE),
     eventCount: eventCountScore,
@@ -77,6 +84,7 @@ export function calculateProvenanceScore(
     timingConsistency: timingScore,
     uniqueActors: actorScore,
     authorizedActorDepth: authorizedActorDepthScore,
+    actorReputation: actorReputationScore,
   };
 }
 
