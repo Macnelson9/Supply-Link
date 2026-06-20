@@ -14,6 +14,14 @@ import {
   formatCoverageAmount,
   isCoverageExpired,
   COVERAGE_STATUS_BADGE,
+  assessRisk,
+  calculatePremium,
+  listProviders,
+  getProvider,
+  processClaimAutomatically,
+  generateInsuranceCertificate,
+  getCertificate,
+  listCertificatesForCoverage,
 } from '@/lib/services/insuranceCoverage';
 import type { InsuranceStatus } from '@/lib/services/insuranceCoverage';
 
@@ -26,7 +34,7 @@ function uniquePid() {
 
 const NOW = Date.now();
 const FUTURE = NOW + 365 * 24 * 60 * 60 * 1000; // +1 year
-const PAST = NOW - 365 * 24 * 60 * 60 * 1000;   // -1 year
+const PAST = NOW - 365 * 24 * 60 * 60 * 1000; // -1 year
 
 function makeCoverage(productId: string, validUntil = FUTURE) {
   return addCoverage({
@@ -264,5 +272,262 @@ describe('Insurance Coverage — COVERAGE_STATUS_BADGE', () => {
       expect(COVERAGE_STATUS_BADGE[s]).toBeTypeOf('string');
       expect(COVERAGE_STATUS_BADGE[s].length).toBeGreaterThan(0);
     }
+  });
+});
+
+// ── New feature tests ──────────────────────────────────────────────────────────
+
+describe('Risk Assessment — assessRisk', () => {
+  it('returns a low risk score for safe products', () => {
+    const result = assessRisk({
+      productId: 'prod-safe',
+      productValue: 1_000,
+      hasRecallHistory: false,
+      transitRiskScore: 1,
+      certificationCount: 5,
+      storageRiskScore: 1,
+    });
+    expect(result.score).toBeGreaterThanOrEqual(0);
+    expect(result.level).toBe('low');
+    expect(result.factors).toHaveLength(5);
+    expect(result.recommendedCoverageMultiplier).toBe(1.0);
+  });
+
+  it('returns a critical risk level for high-risk products', () => {
+    const result = assessRisk({
+      productId: 'prod-risky',
+      productValue: 5_000_000,
+      hasRecallHistory: true,
+      transitRiskScore: 9,
+      certificationCount: 0,
+      storageRiskScore: 9,
+    });
+    expect(result.score).toBeGreaterThan(5);
+    expect(['high', 'critical']).toContain(result.level);
+    expect(result.recommendedCoverageMultiplier).toBeGreaterThan(1.0);
+  });
+
+  it('includes productId and assessedAt', () => {
+    const result = assessRisk({
+      productId: 'prod-x',
+      productValue: 0,
+      hasRecallHistory: false,
+      transitRiskScore: 5,
+      certificationCount: 2,
+      storageRiskScore: 5,
+    });
+    expect(result.productId).toBe('prod-x');
+    expect(result.assessedAt).toBeGreaterThan(0);
+  });
+});
+
+describe('Premium Calculation — calculatePremium', () => {
+  it('calculates annual and monthly premium for Acme Insurance', () => {
+    const risk = assessRisk({
+      productId: 'prod-p',
+      productValue: 50_000,
+      hasRecallHistory: false,
+      transitRiskScore: 3,
+      certificationCount: 3,
+      storageRiskScore: 3,
+    });
+
+    const quote = calculatePremium({
+      productId: 'prod-p',
+      provider: 'Acme Insurance',
+      coverageType: 'product liability',
+      coverageAmount: 1_000_000_00,
+      currency: 'USD',
+      riskAssessment: risk,
+    });
+
+    expect(quote.annualPremium).toBeGreaterThan(0);
+    expect(quote.monthlyPremium).toBe(Math.round(quote.annualPremium / 12));
+    expect(quote.provider).toBe('Acme Insurance');
+    expect(quote.riskScore).toBe(risk.score);
+  });
+
+  it('applies higher premium for recall coverage type', () => {
+    const risk = assessRisk({
+      productId: 'prod-q',
+      productValue: 10_000,
+      hasRecallHistory: false,
+      transitRiskScore: 2,
+      certificationCount: 3,
+      storageRiskScore: 2,
+    });
+
+    const liability = calculatePremium({
+      productId: 'prod-q',
+      provider: 'Acme Insurance',
+      coverageType: 'product liability',
+      coverageAmount: 500_000_00,
+      currency: 'USD',
+      riskAssessment: risk,
+    });
+
+    const recall = calculatePremium({
+      productId: 'prod-q',
+      provider: 'Acme Insurance',
+      coverageType: 'recall',
+      coverageAmount: 500_000_00,
+      currency: 'USD',
+      riskAssessment: risk,
+    });
+
+    expect(recall.annualPremium).toBeGreaterThan(liability.annualPremium);
+  });
+
+  it("returns a valid quote for Lloyd's of Supply", () => {
+    const risk = assessRisk({
+      productId: 'prod-l',
+      productValue: 100_000,
+      hasRecallHistory: false,
+      transitRiskScore: 5,
+      certificationCount: 2,
+      storageRiskScore: 4,
+    });
+
+    const quote = calculatePremium({
+      productId: 'prod-l',
+      provider: "Lloyd's of Supply",
+      coverageType: 'cargo',
+      coverageAmount: 2_000_000_00,
+      currency: 'GBP',
+      riskAssessment: risk,
+    });
+
+    expect(quote.annualPremium).toBeGreaterThan(0);
+    expect(quote.currency).toBe('GBP');
+  });
+});
+
+describe('Provider Registry — listProviders / getProvider', () => {
+  it('lists at least two providers', () => {
+    const providers = listProviders();
+    expect(providers.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('returns Acme Insurance config', () => {
+    const p = getProvider('Acme Insurance');
+    expect(p).not.toBeNull();
+    expect(p!.id).toBe('acme');
+    expect(p!.autoApprovalThreshold).toBeGreaterThan(0);
+  });
+
+  it("returns Lloyd's of Supply config", () => {
+    const p = getProvider("Lloyd's of Supply");
+    expect(p).not.toBeNull();
+    expect(p!.id).toBe('lloyds');
+    expect(p!.claimSlaHours).toBeLessThanOrEqual(48);
+  });
+
+  it('returns null for unknown provider', () => {
+    expect(getProvider('Unknown Co')).toBeNull();
+  });
+});
+
+describe('Automatic Claim Processing — processClaimAutomatically', () => {
+  it('auto-approves a claim below threshold with document hash', () => {
+    const pid = uniquePid();
+    const cov = makeCoverage(pid);
+    const proof = addClaimProof({
+      coverageId: cov.id,
+      productId: pid,
+      description: 'Minor defect',
+      proofRef: 'ipfs://QmAuto',
+      documentHash: 'abc123def456',
+      claimant: 'GAUTO',
+    })!;
+
+    const result = processClaimAutomatically(cov.id, proof.id);
+    expect(result).not.toBeNull();
+    expect(['auto_approved', 'manual_review']).toContain(result!.decision);
+    expect(result!.claimId).toBe(proof.id);
+    expect(result!.slaDeadline).toBeGreaterThan(result!.processedAt);
+  });
+
+  it('routes to manual_review when document hash is missing', () => {
+    const pid = uniquePid();
+    const cov = makeCoverage(pid);
+    const proof = addClaimProof({
+      coverageId: cov.id,
+      productId: pid,
+      description: 'No hash claim',
+      proofRef: 'ipfs://QmNoHash',
+      claimant: 'GNOHASH',
+    })!;
+
+    const result = processClaimAutomatically(cov.id, proof.id);
+    expect(result).not.toBeNull();
+    expect(result!.decision).toBe('manual_review');
+  });
+
+  it('auto-rejects claims on voided coverage', () => {
+    const pid = uniquePid();
+    const cov = makeCoverage(pid);
+    const proof = addClaimProof({
+      coverageId: cov.id,
+      productId: pid,
+      description: 'Post-void claim',
+      proofRef: 'ipfs://QmVoid',
+      claimant: 'GVOID',
+    })!;
+    voidCoverage(cov.id);
+
+    const result = processClaimAutomatically(cov.id, proof.id);
+    expect(result).not.toBeNull();
+    expect(result!.decision).toBe('auto_rejected');
+  });
+
+  it('returns null for unknown coverage or claim', () => {
+    expect(processClaimAutomatically('bad-cov', 'bad-claim')).toBeNull();
+  });
+});
+
+describe('Certificate Generation — generateInsuranceCertificate', () => {
+  it('generates a blockchain-verified certificate', () => {
+    const pid = uniquePid();
+    const cov = makeCoverage(pid);
+    const cert = generateInsuranceCertificate(cov.id, 'GISSUER123');
+
+    expect(cert).not.toBeNull();
+    expect(cert!.certificateId).toMatch(/^cert-/);
+    expect(cert!.coverageId).toBe(cov.id);
+    expect(cert!.productId).toBe(pid);
+    expect(cert!.blockchainRef).toMatch(/^stellar:/);
+    expect(cert!.integrityHash).toMatch(/^sha256-sim:/);
+    expect(cert!.verified).toBe(true);
+    expect(cert!.issuedBy).toBe('GISSUER123');
+  });
+
+  it('returns null for voided coverage', () => {
+    const pid = uniquePid();
+    const cov = makeCoverage(pid);
+    voidCoverage(cov.id);
+    expect(generateInsuranceCertificate(cov.id, 'GISSUER')).toBeNull();
+  });
+
+  it('returns null for unknown coverage', () => {
+    expect(generateInsuranceCertificate('nonexistent', 'G123')).toBeNull();
+  });
+
+  it('can be retrieved by certificateId', () => {
+    const pid = uniquePid();
+    const cov = makeCoverage(pid);
+    const cert = generateInsuranceCertificate(cov.id, 'GOWNER')!;
+    const fetched = getCertificate(cert.certificateId);
+    expect(fetched).not.toBeNull();
+    expect(fetched!.certificateId).toBe(cert.certificateId);
+  });
+
+  it('can list all certificates for a coverage', () => {
+    const pid = uniquePid();
+    const cov = makeCoverage(pid);
+    generateInsuranceCertificate(cov.id, 'GOWNER');
+    generateInsuranceCertificate(cov.id, 'GADMIN');
+    const certs = listCertificatesForCoverage(cov.id);
+    expect(certs.length).toBeGreaterThanOrEqual(2);
+    expect(certs.every((c) => c.coverageId === cov.id)).toBe(true);
   });
 });

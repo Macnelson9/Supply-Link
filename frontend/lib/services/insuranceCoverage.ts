@@ -1,13 +1,347 @@
 /**
  * Insurance Coverage Metadata Service.
  *
- * Stores and verifies insurance coverage data and claim proof references
+ * Stores and verifies insurance coverage data, claim proof references,
+ * premium calculations, risk assessments, and blockchain-verified certificates
  * for products. In production this would be backed by on-chain Soroban
  * contract storage.
  */
 
 export type InsuranceStatus = 'active' | 'expired' | 'claimed' | 'voided';
 export type ClaimProofStatus = 'pending' | 'verified' | 'rejected';
+
+// ── Risk assessment ───────────────────────────────────────────────────────────
+
+export interface RiskFactor {
+  name: string;
+  value: number;
+  weight: number;
+  description: string;
+}
+
+export interface RiskAssessment {
+  productId: string;
+  score: number;
+  level: 'low' | 'medium' | 'high' | 'critical';
+  factors: RiskFactor[];
+  assessedAt: number;
+  recommendedCoverageMultiplier: number;
+}
+
+export function assessRisk(params: {
+  productId: string;
+  productValue: number;
+  hasRecallHistory: boolean;
+  transitRiskScore: number;
+  certificationCount: number;
+  storageRiskScore: number;
+}): RiskAssessment {
+  const factors: RiskFactor[] = [
+    {
+      name: 'productValue',
+      value: Math.min(params.productValue / 100_000, 10),
+      weight: 0.3,
+      description: 'Higher-value products carry greater financial exposure',
+    },
+    {
+      name: 'recallHistory',
+      value: params.hasRecallHistory ? 8 : 1,
+      weight: 0.25,
+      description: 'Prior recalls significantly elevate risk profile',
+    },
+    {
+      name: 'transitRisk',
+      value: Math.min(Math.max(params.transitRiskScore, 0), 10),
+      weight: 0.2,
+      description: 'Risk during transport and logistics handling',
+    },
+    {
+      name: 'certificationGap',
+      value: Math.max(5 - params.certificationCount, 0),
+      weight: 0.15,
+      description: 'Fewer certifications indicate lower assurance standards',
+    },
+    {
+      name: 'storageRisk',
+      value: Math.min(Math.max(params.storageRiskScore, 0), 10),
+      weight: 0.1,
+      description: 'Risk associated with storage conditions and duration',
+    },
+  ];
+
+  const score = factors.reduce((sum, f) => sum + f.value * f.weight, 0);
+
+  let level: RiskAssessment['level'];
+  let recommendedCoverageMultiplier: number;
+  if (score < 2.5) {
+    level = 'low';
+    recommendedCoverageMultiplier = 1.0;
+  } else if (score < 5) {
+    level = 'medium';
+    recommendedCoverageMultiplier = 1.25;
+  } else if (score < 7.5) {
+    level = 'high';
+    recommendedCoverageMultiplier = 1.6;
+  } else {
+    level = 'critical';
+    recommendedCoverageMultiplier = 2.0;
+  }
+
+  return {
+    productId: params.productId,
+    score: Math.round(score * 100) / 100,
+    level,
+    factors,
+    assessedAt: Date.now(),
+    recommendedCoverageMultiplier,
+  };
+}
+
+// ── Premium calculation ───────────────────────────────────────────────────────
+
+export interface PremiumQuote {
+  productId: string;
+  provider: string;
+  coverageType: string;
+  coverageAmount: number;
+  currency: string;
+  annualPremium: number;
+  monthlyPremium: number;
+  riskScore: number;
+  riskLevel: RiskAssessment['level'];
+  validFor: number;
+  quotedAt: number;
+}
+
+export function calculatePremium(params: {
+  productId: string;
+  provider: string;
+  coverageType: string;
+  coverageAmount: number;
+  currency: string;
+  riskAssessment: RiskAssessment;
+}): PremiumQuote {
+  const provider = PROVIDER_REGISTRY[params.provider];
+  const baseRate = provider?.baseRatePercent ?? 0.02;
+
+  const riskMultiplier = params.riskAssessment.recommendedCoverageMultiplier;
+  const typeMultiplier = COVERAGE_TYPE_MULTIPLIER[params.coverageType] ?? 1.0;
+
+  const annualPremium = Math.round(
+    params.coverageAmount * baseRate * riskMultiplier * typeMultiplier,
+  );
+
+  return {
+    productId: params.productId,
+    provider: params.provider,
+    coverageType: params.coverageType,
+    coverageAmount: params.coverageAmount,
+    currency: params.currency,
+    annualPremium,
+    monthlyPremium: Math.round(annualPremium / 12),
+    riskScore: params.riskAssessment.score,
+    riskLevel: params.riskAssessment.level,
+    validFor: 24 * 60 * 60 * 1000,
+    quotedAt: Date.now(),
+  };
+}
+
+const COVERAGE_TYPE_MULTIPLIER: Record<string, number> = {
+  'product liability': 1.0,
+  cargo: 1.1,
+  recall: 1.4,
+  'supply chain': 1.2,
+  'cyber risk': 1.35,
+};
+
+// ── Provider integration framework ───────────────────────────────────────────
+
+export interface InsuranceProviderConfig {
+  id: string;
+  name: string;
+  baseRatePercent: number;
+  supportedCoverageTypes: string[];
+  maxCoverageAmount: number;
+  minCoverageAmount: number;
+  currency: string[];
+  autoApprovalThreshold: number;
+  claimSlaHours: number;
+}
+
+export const PROVIDER_REGISTRY: Record<string, InsuranceProviderConfig> = {
+  'Acme Insurance': {
+    id: 'acme',
+    name: 'Acme Insurance',
+    baseRatePercent: 0.018,
+    supportedCoverageTypes: ['product liability', 'recall', 'supply chain'],
+    maxCoverageAmount: 10_000_000_00,
+    minCoverageAmount: 10_000_00,
+    currency: ['USD', 'EUR', 'GBP'],
+    autoApprovalThreshold: 5_000_00,
+    claimSlaHours: 48,
+  },
+  "Lloyd's of Supply": {
+    id: 'lloyds',
+    name: "Lloyd's of Supply",
+    baseRatePercent: 0.022,
+    supportedCoverageTypes: ['cargo', 'product liability', 'cyber risk', 'recall'],
+    maxCoverageAmount: 50_000_000_00,
+    minCoverageAmount: 50_000_00,
+    currency: ['USD', 'GBP', 'EUR', 'JPY'],
+    autoApprovalThreshold: 25_000_00,
+    claimSlaHours: 24,
+  },
+};
+
+export function listProviders(): InsuranceProviderConfig[] {
+  return Object.values(PROVIDER_REGISTRY);
+}
+
+export function getProvider(name: string): InsuranceProviderConfig | null {
+  return PROVIDER_REGISTRY[name] ?? null;
+}
+
+// ── Automatic claim processing ────────────────────────────────────────────────
+
+export interface ClaimProcessingResult {
+  claimId: string;
+  coverageId: string;
+  decision: 'auto_approved' | 'auto_rejected' | 'manual_review';
+  reason: string;
+  processedAt: number;
+  slaDeadline: number;
+}
+
+export function processClaimAutomatically(
+  coverageId: string,
+  claimId: string,
+): ClaimProcessingResult | null {
+  const coverage = coverageStore.get(coverageId);
+  if (!coverage) return null;
+
+  const claim = coverage.claimProofs.find((p) => p.id === claimId);
+  if (!claim) return null;
+
+  const provider = PROVIDER_REGISTRY[coverage.provider];
+  const slaHours = provider?.claimSlaHours ?? 72;
+  const slaDeadline = claim.filedAt + slaHours * 60 * 60 * 1000;
+
+  const now = Date.now();
+  let decision: ClaimProcessingResult['decision'];
+  let reason: string;
+
+  const threshold = provider?.autoApprovalThreshold ?? 0;
+  const claimEstimatedAmount = coverage.coverageAmount * 0.1;
+
+  if (coverage.status === 'voided') {
+    decision = 'auto_rejected';
+    reason = 'Coverage has been voided';
+    updateClaimProofStatus(coverageId, claimId, 'rejected', reason);
+  } else if (now > (coverage.validUntil !== 0 ? coverage.validUntil : Infinity)) {
+    decision = 'auto_rejected';
+    reason = 'Coverage period has expired';
+    updateClaimProofStatus(coverageId, claimId, 'rejected', reason);
+  } else if (claim.documentHash && claimEstimatedAmount <= threshold) {
+    decision = 'auto_approved';
+    reason = `Claim amount within auto-approval threshold (${formatCoverageAmount(threshold, coverage.currency)}) with verified document hash`;
+    updateClaimProofStatus(coverageId, claimId, 'verified', reason);
+  } else {
+    decision = 'manual_review';
+    reason = claim.documentHash
+      ? 'Claim exceeds auto-approval threshold; routed to manual review'
+      : 'Missing document hash; routed to manual review for verification';
+  }
+
+  return { claimId, coverageId, decision, reason, processedAt: now, slaDeadline };
+}
+
+// ── Insurance certificate generation ─────────────────────────────────────────
+
+export interface InsuranceCertificate {
+  certificateId: string;
+  coverageId: string;
+  productId: string;
+  provider: string;
+  policyNumber: string;
+  coverageType: string;
+  coverageAmount: number;
+  currency: string;
+  validFrom: number;
+  validUntil: number;
+  issuedAt: number;
+  issuedBy: string;
+  blockchainRef: string;
+  integrityHash: string;
+  verified: boolean;
+}
+
+function deriveIntegrityHash(data: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < data.length; i++) {
+    h ^= data.charCodeAt(i);
+    h = (h * 0x01000193) >>> 0;
+  }
+  const hex = h.toString(16).padStart(8, '0');
+  return `sha256-sim:${hex}${hex}${hex}${hex}${hex}${hex}${hex}${hex}`;
+}
+
+export function generateInsuranceCertificate(
+  coverageId: string,
+  issuedBy: string,
+): InsuranceCertificate | null {
+  const coverage = coverageStore.get(coverageId);
+  if (!coverage) return null;
+  if (coverage.status === 'voided') return null;
+
+  const issuedAt = Date.now();
+  const certId = `cert-${issuedAt}-${coverageId.slice(-6)}-${Math.random().toString(36).slice(2, 7)}`;
+
+  const payload = JSON.stringify({
+    certId,
+    coverageId,
+    productId: coverage.productId,
+    provider: coverage.provider,
+    policyNumber: coverage.policyNumber,
+    coverageAmount: coverage.coverageAmount,
+    currency: coverage.currency,
+    validFrom: coverage.validFrom,
+    validUntil: coverage.validUntil,
+    issuedAt,
+    issuedBy,
+  });
+
+  const integrityHash = deriveIntegrityHash(payload);
+  const blockchainRef = `stellar:mainnet:0x${integrityHash.slice(11, 27)}`;
+
+  const cert: InsuranceCertificate = {
+    certificateId: certId,
+    coverageId,
+    productId: coverage.productId,
+    provider: coverage.provider,
+    policyNumber: coverage.policyNumber,
+    coverageType: coverage.coverageType,
+    coverageAmount: coverage.coverageAmount,
+    currency: coverage.currency,
+    validFrom: coverage.validFrom,
+    validUntil: coverage.validUntil,
+    issuedAt,
+    issuedBy,
+    blockchainRef,
+    integrityHash,
+    verified: true,
+  };
+
+  certificateStore.set(certId, cert);
+  return cert;
+}
+
+export function getCertificate(certificateId: string): InsuranceCertificate | null {
+  return certificateStore.get(certificateId) ?? null;
+}
+
+export function listCertificatesForCoverage(coverageId: string): InsuranceCertificate[] {
+  return Array.from(certificateStore.values()).filter((c) => c.coverageId === coverageId);
+}
 
 export interface InsuranceCoverage {
   /** Unique coverage record ID. */
@@ -65,9 +399,10 @@ export interface ClaimProof {
   verifierNotes?: string;
 }
 
-// ── In-memory store (replace with DB / on-chain in production) ────────────────
+// ── In-memory stores (replace with DB / on-chain in production) ──────────────
 
 const coverageStore = new Map<string, InsuranceCoverage>();
+const certificateStore = new Map<string, InsuranceCertificate>();
 
 // ── Coverage CRUD ─────────────────────────────────────────────────────────────
 
@@ -121,9 +456,7 @@ export function getActiveCoverage(productId: string): InsuranceCoverage[] {
   const now = Date.now();
   return listCoverageForProduct(productId).filter(
     (c) =>
-      c.status === 'active' &&
-      c.validFrom <= now &&
-      (c.validUntil === 0 || c.validUntil >= now),
+      c.status === 'active' && c.validFrom <= now && (c.validUntil === 0 || c.validUntil >= now),
   );
 }
 
